@@ -25,9 +25,9 @@ export interface Activity {
   assignedBy?: string;
   priority: 'alta' | 'media' | 'baja';
   teamId?: string;
-  // Set when status becomes 'done', cleared otherwise. Drives the 3-day
+  // Set when status becomes 'done', cleared otherwise. Drives the 1-day
   // auto-archive: the live board hides done tasks older than this, but they
-  // remain visible in the Historial (see isRecentlyDone in App.tsx).
+  // remain visible in the Historial (see isDoneVisibleOnBoard in App.tsx).
   completedAt?: string;
 }
 

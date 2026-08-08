@@ -15,7 +15,7 @@ A real-time multi-user Kanban board. Spanish UI, informal user (typos in prompts
 
 ## Data model (Firestore collections)
 
-- `activities` — the tasks. Status is `'todo' | 'doing' | 'done' | 'cancelled'`. `teamId` is set for team tasks, absent/null for personal tasks. `completedAt` is set when status becomes `'done'` and cleared otherwise (see `updateActivityStatus` in `db.ts`) — this timestamp, not `createdAt`, drives the 3-day auto-archive.
+- `activities` — the tasks. Status is `'todo' | 'doing' | 'done' | 'cancelled'`. `teamId` is set for team tasks, absent/null for personal tasks. `completedAt` is set when status becomes `'done'` and cleared otherwise (see `updateActivityStatus` in `db.ts`) — this timestamp, not `createdAt`, drives the 1-day auto-archive.
 - `users` — just `{ username, lastLogin }`, keyed by lowercased username. "admin" is a special username (see Auth below), not a role flag on a user document.
 - `teams` — `{ id, name, memberUsernames[], createdAt }`.
 - `presence` — one doc per user (keyed by lowercased username), `{ username, context, lastSeen }`, written every 8s while the app is open (see the heartbeat `useEffect`, ~line 624). There is **no server-side expiry** (no Realtime Database, no `onDisconnect()`), so a closed tab leaves a stale presence doc behind forever unless `clearPresence` runs on logout. Readers must always filter by `isPresenceFresh()` (`db.ts`, 20s staleness window) — never trust a presence doc's mere existence.
@@ -42,10 +42,10 @@ When adding a feature that touches "the board," scope it through `displayedActiv
 
 **Team-scoped assignment:** the "Asignar A" dropdown in the activity modal restricts options to `viewingTeam.memberUsernames` when on a team board, vs. all non-admin users otherwise (`App.tsx`, ~line 1454). If members get added/removed from a team, existing assigned activities keep their `username` as-is — there's no cascading update.
 
-## The 3-day auto-archive / Historial
+## The 1-day auto-archive / Historial
 
-- `THREE_DAYS_MS` + `isDoneVisibleOnBoard(a)` (~line 663): a completed task stays on the live "Realizado" column only if `completedAt` is within the last 3 days, or if it has no `completedAt` at all (legacy-data safety net — don't remove that fallback, it's not dead code).
-- `historyActivities` is every `status === 'done'` activity in the current scope, sorted newest-first — this is the full history, not just the last 3 days. The "Historial" modal renders this list.
+- `ONE_DAY_MS` + `isDoneVisibleOnBoard(a)` (~line 663): a completed task stays on the live "Realizado" column only if `completedAt` is within the last day, or if it has no `completedAt` at all (legacy-data safety net — don't remove that fallback, it's not dead code).
+- `historyActivities` is every `status === 'done'` activity in the current scope, sorted newest-first — this is the full history, not just the last day. The "Historial" modal renders this list.
 - Nothing ever deletes a completed task automatically; "archiving" is purely a display filter based on `completedAt`, not a data migration. If the user asks why an old completed task "disappeared," it's still in Firestore — check the Historial modal, not the database.
 
 ## The drag-and-drop / trash-cancel gesture

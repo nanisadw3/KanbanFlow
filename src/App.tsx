@@ -657,15 +657,15 @@ function App() {
     ? onlineNow.filter(p => p.context === `team-${viewingTeam.id}` && p.username.toLowerCase() !== user?.username.toLowerCase())
     : [];
 
-  // A completed task stays on the live board for 3 days, then quietly
+  // A completed task stays on the live board for 1 day, then quietly
   // drops off it (it still exists — see the Historial modal). Tasks
   // without a completedAt yet (older data) stay visible until they get one.
-  const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
   const isDoneVisibleOnBoard = (a: Activity) =>
-    !a.completedAt || now - new Date(a.completedAt).getTime() < THREE_DAYS_MS;
+    !a.completedAt || now - new Date(a.completedAt).getTime() < ONE_DAY_MS;
 
   // Every completed task for the current context (personal/team/supervised
-  // user), newest first — this is the full Historial, not just the last 3 days.
+  // user), newest first — this is the full Historial, not just the last day.
   const historyActivities = displayedActivities
     .filter(a => a.status === 'done')
     .sort((a, b) => new Date(b.completedAt || b.createdAt).getTime() - new Date(a.completedAt || a.createdAt).getTime());
@@ -1553,7 +1553,7 @@ function App() {
         </div>
       )}
 
-      {/* Historial: every completed task, not just the last 3 days on the live board */}
+      {/* Historial: every completed task, not just the last day on the live board */}
       {isHistoryModalOpen && (
         <div className="modal-overlay" onClick={() => setIsHistoryModalOpen(false)}>
           <div className="glass-panel modal-content" onClick={(e) => e.stopPropagation()}>

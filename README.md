@@ -9,7 +9,7 @@ A real-time, multi-user Kanban board built with React + TypeScript + Firebase Fi
 - **Presence indicators** — see who else is online and which board they're currently viewing.
 - **Admin dashboard** — clickable stat cards that double as filters, a searchable/paginated user list, per-user and per-team activity clearing, and a "Ver Productividad" page with completion-rate charts per user.
 - **Teams** — group users into teams with a shared Kanban board; task assignment is restricted to that team's members.
-- **Auto-archive / Historial** — completed tasks stay on the live board for 3 days, then quietly move to a per-context "Historial" view (still there, just off the busy board).
+- **Auto-archive / Historial** — completed tasks stay on the live board for 1 day, then quietly move to a per-context "Historial" view (still there, just off the busy board).
 - **Light/dark theme**, persisted in `localStorage`.
 - **Optional Google Calendar sync** — pushes a user's active tasks to their Google Calendar as events (requires a Google OAuth Client ID; without one it runs a harmless simulated sync).
 
