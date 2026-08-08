@@ -1,0 +1,200 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
+
+:root {
+  --font-sans: 'Plus Jakarta Sans', sans-serif;
+  --font-display: 'Outfit', sans-serif;
+
+  /* Light Mode Colors (Default) — neutral grays, muted, never stark white */
+  --bg-main: #e8e9eb;
+  --bg-card: rgba(248, 248, 249, 0.72);
+  --bg-card-hover: rgba(248, 248, 249, 0.9);
+  --bg-column: rgba(255, 255, 255, 0.35);
+  --bg-input: #eeeff1;
+
+  --border-color: #d4d5d8;
+  --border-color-hover: #adafb4;
+
+  --color-primary: #3b5bdb;
+  --color-primary-rgb: 59, 91, 219;
+  --color-primary-glow: rgba(59, 91, 219, 0.2);
+
+  --color-secondary: #6b7280;
+  --color-secondary-rgb: 107, 114, 128;
+  --color-secondary-glow: rgba(107, 114, 128, 0.16);
+
+  --color-accent: #4b5563;
+  --color-accent-rgb: 75, 85, 99;
+  --color-accent-glow: rgba(75, 85, 99, 0.14);
+
+  --color-todo: #b45309;
+  --color-todo-rgb: 180, 83, 9;
+  --color-doing: #3b5bdb;
+  --color-doing-rgb: 59, 91, 219;
+  --color-done: #15803d;
+  --color-done-rgb: 21, 128, 61;
+
+  --color-danger: #d93025;
+  --color-danger-rgb: 217, 48, 37;
+
+  /* Chart fills — same status hues, validated against each surface (see dataviz skill) */
+  --chart-todo: #b45309;
+  --chart-doing: #3b5bdb;
+  --chart-done: #15803d;
+
+  --text-main: #24262b;
+  --text-muted: #64676d;
+  --text-inverse: #ffffff;
+
+  /* Neutral tint used for overlays/chips so they adapt per theme */
+  --overlay-rgb: 20, 22, 26;
+  --scrim: rgba(15, 17, 20, 0.45);
+
+  --shadow-sm: 0 1px 2px 0 rgba(60,64,67,0.2), 0 1px 3px 1px rgba(60,64,67,0.1);
+  --shadow-md: 0 4px 16px rgba(60, 64, 67, 0.1);
+  --shadow-lg: 0 16px 32px rgba(60, 64, 67, 0.14);
+  --shadow-glow: 0 0 15px rgba(59, 91, 219, 0.25);
+
+  --glass-blur: blur(20px) saturate(120%);
+  --transition-smooth: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-spring: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Dark Mode Overrides — pure neutral grays, no purple/teal tint */
+body.dark-theme {
+  --bg-main: #1b1c1e;
+  --bg-card: rgba(37, 38, 41, 0.62);
+  --bg-card-hover: rgba(45, 46, 50, 0.8);
+  --bg-column: rgba(15, 16, 18, 0.4);
+  --bg-input: #202124;
+
+  --border-color: #3a3b3f;
+  --border-color-hover: #5a5c61;
+
+  --color-primary: #8ab4f8;
+  --color-primary-rgb: 138, 180, 248;
+  --color-primary-glow: rgba(138, 180, 248, 0.2);
+
+  --color-secondary: #9aa0a6;
+  --color-secondary-rgb: 154, 160, 166;
+  --color-secondary-glow: rgba(154, 160, 166, 0.16);
+
+  --color-accent: #c1c5cc;
+  --color-accent-rgb: 193, 197, 204;
+  --color-accent-glow: rgba(193, 197, 204, 0.14);
+
+  --color-todo: #fdd663;
+  --color-todo-rgb: 253, 214, 99;
+  --color-doing: #8ab4f8;
+  --color-doing-rgb: 138, 180, 248;
+  --color-done: #81c995;
+  --color-done-rgb: 129, 201, 149;
+
+  --color-danger: #f28b82;
+  --color-danger-rgb: 242, 139, 130;
+
+  --chart-todo: #d97706;
+  --chart-doing: #5b7ce8;
+  --chart-done: #2fa360;
+
+  --text-main: #e8eaed;
+  --text-muted: #9aa0a6;
+  --text-inverse: #202124;
+
+  --overlay-rgb: 255, 255, 255;
+  --scrim: rgba(0, 0, 0, 0.7);
+
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.5);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.4);
+  --shadow-lg: 0 16px 36px rgba(0,0,0,0.5);
+  --shadow-glow: 0 0 15px rgba(138, 180, 248, 0.35);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-sans);
+}
+
+body {
+  background-color: var(--bg-main);
+  color: var(--text-main);
+  min-height: 100vh;
+  overflow-x: hidden;
+  position: relative;
+  transition: background-color 0.4s ease, color 0.4s ease;
+}
+
+#root {
+  width: 100%;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 15px rgba(var(--color-accent-rgb), 0.3); }
+  50% { box-shadow: 0 0 25px rgba(var(--color-accent-rgb), 0.6); }
+}
+
+@keyframes borderGradient {
+  0% { border-color: rgba(var(--color-accent-rgb), 0.3); }
+  50% { border-color: rgba(var(--color-secondary-rgb), 0.5); }
+  100% { border-color: rgba(var(--color-accent-rgb), 0.3); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Staggered entrance for lists of cards/rows */
+.cards-container > *,
+.admin-dashboard .admin-user-row {
+  animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.cards-container > *:nth-child(1), .admin-user-row:nth-child(1) { animation-delay: 0.02s; }
+.cards-container > *:nth-child(2), .admin-user-row:nth-child(2) { animation-delay: 0.06s; }
+.cards-container > *:nth-child(3), .admin-user-row:nth-child(3) { animation-delay: 0.1s; }
+.cards-container > *:nth-child(4), .admin-user-row:nth-child(4) { animation-delay: 0.14s; }
+.cards-container > *:nth-child(5), .admin-user-row:nth-child(5) { animation-delay: 0.18s; }
+.cards-container > *:nth-child(n+6), .admin-user-row:nth-child(n+6) { animation-delay: 0.22s; }
+
+/* Accessible focus ring, consistent everywhere */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(var(--overlay-rgb), 0.03);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(var(--overlay-rgb), 0.14);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(var(--overlay-rgb), 0.25);
+}
