@@ -2,6 +2,16 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 
+# On a network that TLS-inspects HTTPS (corporate proxy/VPN/antivirus),
+# Alpine's package index fetch fails with "TLS: server certificate not
+# trusted" because apk doesn't trust that proxy's certificate. The proper fix
+# is trusting that proxy's root CA inside the image; as a pragmatic escape
+# hatch, pass --build-arg APK_INSECURE_HTTP=1 to fetch packages over plain
+# HTTP instead (skips TLS validation for this fetch only). Left off by
+# default — do not set this for a build that leaves your own trusted network.
+ARG APK_INSECURE_HTTP=
+RUN if [ -n "$APK_INSECURE_HTTP" ]; then sed -i 's/https:/http:/' /etc/apk/repositories; fi
+
 # sqlite3's native bindings need a C/C++ toolchain to compile on Alpine.
 RUN apk add --no-cache python3 make g++
 
@@ -23,6 +33,10 @@ RUN npm run build
 # --- Runtime stage -------------------------------------------------------------
 FROM node:22-alpine AS runtime
 WORKDIR /app
+
+# See the build stage above for what this is.
+ARG APK_INSECURE_HTTP=
+RUN if [ -n "$APK_INSECURE_HTTP" ]; then sed -i 's/https:/http:/' /etc/apk/repositories; fi
 
 # Needed only to compile sqlite3's native addon during `npm ci`; removed
 # afterwards so the runtime image doesn't carry a C/C++ toolchain.
