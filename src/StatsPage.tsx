@@ -5,7 +5,7 @@ import './App.css';
 
 function StatsPage({ onBack }: { onBack: () => void }) {
   const [activities, setActivities] = useState<Activity[]>([]);
-  const [usernames, setUsernames] = useState<string[]>([]);
+  const [usersList, setUsersList] = useState<{ username: string; fullName?: string }[]>([]);
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     return (localStorage.getItem('theme') as 'dark' | 'light') || 'dark';
   });
@@ -14,7 +14,7 @@ function StatsPage({ onBack }: { onBack: () => void }) {
     void initDB();
     const unsubActivities = subscribeActivities(setActivities);
     const unsubUsers = subscribeUsers(users => {
-      setUsernames(users.map(u => u.username).filter(u => u.toLowerCase() !== 'admin'));
+      setUsersList(users.filter(u => u.username.toLowerCase() !== 'admin'));
     });
     return () => {
       unsubActivities();
@@ -27,9 +27,16 @@ function StatsPage({ onBack }: { onBack: () => void }) {
     document.body.classList.toggle('light-theme', theme === 'light');
   }, [theme]);
 
-  const rows = usernames
-    .map(username => {
-      const acts = activities.filter(a => a.username.toLowerCase() === username.toLowerCase());
+  // Matches the admin dashboard's stat cards, which count personal (non-team)
+  // activities only — team tasks are tracked separately per team, not folded
+  // into an individual's completion rate here.
+  const personalActivities = activities.filter(a => !a.teamId);
+
+  const rows = usersList
+    .map(u => {
+      const username = u.username;
+      const displayName = u.fullName || u.username;
+      const acts = personalActivities.filter(a => a.username.toLowerCase() === username.toLowerCase());
       const todo = acts.filter(a => a.status === 'todo').length;
       const doing = acts.filter(a => a.status === 'doing').length;
       const done = acts.filter(a => a.status === 'done').length;
@@ -39,15 +46,15 @@ function StatsPage({ onBack }: { onBack: () => void }) {
       const doingRate = total === 0 ? 0 : Math.round((doing / total) * 100);
       const rate = total === 0 ? 0 : Math.round((done / total) * 100);
       const cancelRate = total === 0 ? 0 : Math.round((cancelled / total) * 100);
-      return { username, todo, doing, done, cancelled, total, rate, todoRate, doingRate, cancelRate };
+      return { username, displayName, todo, doing, done, cancelled, total, rate, todoRate, doingRate, cancelRate };
     })
     .sort((a, b) => b.rate - a.rate || b.total - a.total);
 
-  const totalAll = activities.length;
-  const totalTodo = activities.filter(a => a.status === 'todo').length;
-  const totalDoing = activities.filter(a => a.status === 'doing').length;
-  const totalDone = activities.filter(a => a.status === 'done').length;
-  const totalCancelled = activities.filter(a => a.status === 'cancelled').length;
+  const totalAll = personalActivities.length;
+  const totalTodo = personalActivities.filter(a => a.status === 'todo').length;
+  const totalDoing = personalActivities.filter(a => a.status === 'doing').length;
+  const totalDone = personalActivities.filter(a => a.status === 'done').length;
+  const totalCancelled = personalActivities.filter(a => a.status === 'cancelled').length;
 
   const overallTodoRate = totalAll === 0 ? 0 : Math.round((totalTodo / totalAll) * 100);
   const overallDoingRate = totalAll === 0 ? 0 : Math.round((totalDoing / totalAll) * 100);
@@ -128,7 +135,7 @@ function StatsPage({ onBack }: { onBack: () => void }) {
             {rows.map(r => (
               <div className="glass-panel stats-row" key={r.username}>
                 <div className="stats-row-head">
-                  <span className="stats-row-name">{r.username}</span>
+                  <span className="stats-row-name">{r.displayName} <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 'normal' }}>({r.username})</span></span>
                   <span className="stats-row-rate" style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'center' }}>
                     <span style={{ color: 'var(--color-todo)', fontWeight: '600' }}>{r.todoRate}% por realizar</span>
                     <span style={{ color: 'var(--text-muted)' }}>•</span>

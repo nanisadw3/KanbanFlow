@@ -6,6 +6,7 @@ import {
   subscribeTeams,
   subscribePresence,
   loginUser,
+  createUserByAdmin,
   addActivity,
   updateActivityStatus,
   updateActivity,
@@ -29,6 +30,8 @@ function App() {
   const [usernameInput, setUsernameInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [fullNameInput, setFullNameInput] = useState('');
+  const [isNewUserPrompt, setIsNewUserPrompt] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [currentView, setCurrentView] = useState<'board' | 'stats'>('board');
 
@@ -52,12 +55,20 @@ function App() {
   const [endDate, setEndDate] = useState('');
   const [status, setStatus] = useState<'todo' | 'doing' | 'done' | 'cancelled'>('todo');
   const [priority, setPriority] = useState<'alta' | 'media' | 'baja'>('media');
+  const [progress, setProgress] = useState<number>(50);
   const [targetAssignee, setTargetAssignee] = useState<string>('');  // Admin filter
   const [viewingUserAsAdmin, setViewingUserAsAdmin] = useState<User | null>(null);
   const [activeStatusFilters, setActiveStatusFilters] = useState<Set<'todo' | 'doing' | 'done' | 'cancelled'>>(new Set());
   const [activeUserFilters, setActiveUserFilters] = useState<Set<string>>(new Set());
   const [isUsersPanelOpen, setIsUsersPanelOpen] = useState(false);
   const [userSearchQuery, setUserSearchQuery] = useState('');
+
+  // Admin Create User Modal State
+  const [isCreateUserModalOpen, setIsCreateUserModalOpen] = useState(false);
+  const [newUsernameInput, setNewUsernameInput] = useState('');
+  const [newFullNameInput, setNewFullNameInput] = useState('');
+  const [newUserRole, setNewUserRole] = useState<'admin' | 'user'>('user');
+  const [createUserError, setCreateUserError] = useState('');
 
   // Teams state
   const [teams, setTeams] = useState<Team[]>([]);
@@ -92,11 +103,6 @@ function App() {
     return (localStorage.getItem('theme') as 'dark' | 'light') || 'dark';
   });
 
-  // Google Calendar Integration States
-  const [isCalendarModalOpen, setIsCalendarModalOpen] = useState(false);
-  const [googleClientId, setGoogleClientId] = useState(() => localStorage.getItem('google_calendar_client_id') || '');
-  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
-  const [syncMessage, setSyncMessage] = useState('');
   // Custom Confirmation Modal State
   const [confirmConfig, setConfirmConfig] = useState<{
     isOpen: boolean;
@@ -212,10 +218,10 @@ function App() {
   // Lock background scroll while any modal is open, so the modal is always
   // immediately visible instead of requiring the page to be scrolled first.
   useEffect(() => {
-    const anyModalOpen = isModalOpen || isTeamModalOpen || isCalendarModalOpen || confirmConfig.isOpen;
+    const anyModalOpen = isModalOpen || isTeamModalOpen || isCreateUserModalOpen || confirmConfig.isOpen;
     document.body.style.overflow = anyModalOpen ? 'hidden' : '';
     return () => { document.body.style.overflow = ''; };
-  }, [isModalOpen, isTeamModalOpen, isCalendarModalOpen, confirmConfig.isOpen]);
+  }, [isModalOpen, isTeamModalOpen, isCreateUserModalOpen, confirmConfig.isOpen]);
 
   // Presence heartbeats never stop ticking on their own, so we also refresh
   // this every few seconds purely to re-check which entries have gone stale.
@@ -256,85 +262,13 @@ function App() {
     setTheme(prev => prev === 'dark' ? 'light' : 'dark');
   };
 
-  const syncWithGoogleCalendar = async () => {
-    setSyncStatus('syncing');
-    setSyncMessage('Iniciando sincronización...');
 
-    // Save client ID in localStorage
-    localStorage.setItem('google_calendar_client_id', googleClientId);
-
-    const userTasks = displayedActivities;
-    if (userTasks.length === 0) {
-      setSyncStatus('error');
-      setSyncMessage('No hay tareas en el tablero para sincronizar.');
-      return;
-    }
-
-    // Check if client ID is set, otherwise run simulated flow
-    if (!googleClientId || googleClientId.trim() === '') {
-      // Simulate sync
-      setTimeout(() => {
-        setSyncStatus('success');
-        setSyncMessage(`¡Sincronización simulada completada! ${userTasks.length} tareas sincronizadas con éxito. (Configura un Client ID real para enlazar con tu Google Calendar real).`);
-      }, 2500);
-      return;
-    }
-
-    try {
-      // Real flow using Google Identity Services
-      // @ts-ignore
-      const tokenClient = window.google.accounts.oauth2.initTokenClient({
-        client_id: googleClientId,
-        scope: 'https://www.googleapis.com/auth/calendar.events',
-        callback: async (tokenResponse: any) => {
-          if (tokenResponse.error) {
-            setSyncStatus('error');
-            setSyncMessage(`Error de autorización: ${tokenResponse.error_description || tokenResponse.error}`);
-            return;
-          }
-
-          setSyncMessage('Autorización exitosa. Creando eventos en tu calendario...');
-
-          let successCount = 0;
-          for (const task of userTasks) {
-            try {
-              const eventBody = {
-                summary: `[Kanban] ${task.title}`,
-                description: task.description || 'Sin descripción',
-                start: { date: task.startDate },
-                end: { date: task.endDate }
-              };
-
-              const res = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
-                method: 'POST',
-                headers: {
-                  'Authorization': `Bearer ${tokenResponse.access_token}`,
-                  'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(eventBody)
-              });
-
-              if (res.ok) successCount++;
-            } catch (err) {
-              console.error('Error insertando evento', err);
-            }
-          }
-
-          setSyncStatus('success');
-          setSyncMessage(`¡Sincronización finalizada! ${successCount} de ${userTasks.length} tareas se agregaron a tu Google Calendar.`);
-        }
-      });
-
-      tokenClient.requestAccessToken();
-    } catch (err: any) {
-      setSyncStatus('error');
-      setSyncMessage(`Error de integración: ${err.message || err}`);
-    }
-  };
 
   const handleUsernameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setUsernameInput(val);
+    setIsNewUserPrompt(false);
+    setFullNameInput('');
     if (val.toLowerCase() === 'admin') {
       setShowPassword(true);
     } else {
@@ -347,20 +281,74 @@ function App() {
     e.preventDefault();
     setErrorMsg('');
 
-    if (!usernameInput.trim()) {
-      setErrorMsg('Por favor introduce tu nombre');
+    const cleanUsername = usernameInput.trim();
+    if (!cleanUsername) {
+      setErrorMsg('Por favor introduce tu nombre de usuario');
       return;
     }
 
-    if (usernameInput.toLowerCase() === 'admin') {
+    if (cleanUsername.toLowerCase() === 'admin') {
       if (passwordInput !== 'admin') {
         setErrorMsg('Contraseña de administrador incorrecta');
         return;
       }
+      const loggedIn = await loginUser(cleanUsername);
+      setUser(loggedIn);
+      return;
     }
 
-    const loggedIn = await loginUser(usernameInput.trim());
+    const existingUser = users.find(u => u.username.toLowerCase() === cleanUsername.toLowerCase());
+
+    if (!existingUser && !isNewUserPrompt) {
+      setIsNewUserPrompt(true);
+      return;
+    }
+
+    if (isNewUserPrompt) {
+      if (!fullNameInput.trim()) {
+        setErrorMsg('Por favor escribe tu Nombre y Apellido');
+        return;
+      }
+    }
+
+    const loggedIn = await loginUser(
+      cleanUsername, 
+      isNewUserPrompt ? fullNameInput.trim() : existingUser?.fullName,
+      existingUser?.role || (cleanUsername.toLowerCase() === 'admin' ? 'admin' : 'user')
+    );
     setUser(loggedIn);
+    setIsNewUserPrompt(false);
+    setFullNameInput('');
+  };
+
+  const openCreateUserModal = () => {
+    setNewUsernameInput('');
+    setNewFullNameInput('');
+    setNewUserRole('user');
+    setCreateUserError('');
+    setIsCreateUserModalOpen(true);
+  };
+
+  const handleSaveNewUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCreateUserError('');
+
+    const cleanUsername = newUsernameInput.trim();
+    const cleanFullName = newFullNameInput.trim();
+
+    if (!cleanUsername || !cleanFullName) {
+      setCreateUserError('Nombre de usuario y Nombre/Apellido son requeridos.');
+      return;
+    }
+
+    const exists = users.some(u => u.username.toLowerCase() === cleanUsername.toLowerCase());
+    if (exists) {
+      setCreateUserError('El nombre de usuario ya está registrado.');
+      return;
+    }
+
+    await createUserByAdmin(cleanUsername, cleanFullName, newUserRole);
+    setIsCreateUserModalOpen(false);
   };
 
   const handleLogout = () => {
@@ -368,6 +356,8 @@ function App() {
     setUser(null);
     setUsernameInput('');
     setPasswordInput('');
+    setFullNameInput('');
+    setIsNewUserPrompt(false);
     setShowPassword(false);
     handleSelectUser(null);
   };
@@ -468,8 +458,21 @@ function App() {
     e.preventDefault();
     const id = e.dataTransfer.getData('text/plain') || draggedId;
     if (id) {
-      void updateActivityStatus(id, colStatus);
+      const activity = activities.find(a => a.id === id);
+      void updateActivityStatus(id, colStatus, activity?.progress);
     }
+    // Don't rely on the native 'dragend' event to clean up the trash-zone UI here:
+    // a status change can re-render the board (moving this card to a new column's
+    // list) before the browser dispatches 'dragend' on the now-detached source
+    // node, and a detached node's event never bubbles to the window-level safety
+    // net — leaving the "Suelta aquí para cancelar" button stuck visible.
+    isDraggingRef.current = false;
+    if (trashRevealTimerRef.current) {
+      clearTimeout(trashRevealTimerRef.current);
+      trashRevealTimerRef.current = null;
+    }
+    setIsTrashZoneVisible(false);
+    setIsTrashHovering(false);
     setDraggedId(null);
     setDragOverColumn(null);
   };
@@ -520,6 +523,7 @@ function App() {
     setEndDate(new Date().toISOString().split('T')[0]);
     setStatus('todo');
     setPriority('media');
+    setProgress(50);
     const defaultAssignee = assignee
       || viewingUserAsAdmin?.username
       || (viewingTeam
@@ -538,6 +542,7 @@ function App() {
     setEndDate(activity.endDate);
     setStatus(activity.status);
     setPriority(activity.priority);
+    setProgress(activity.progress ?? (activity.status === 'done' ? 100 : activity.status === 'doing' ? 50 : 0));
     setTargetAssignee(activity.username);
     setIsModalOpen(true);
   };
@@ -551,6 +556,8 @@ function App() {
     // person than themselves — self-created tasks don't need the badge.
     const assignedBy = assignee.toLowerCase() !== user.username.toLowerCase() ? user.username : undefined;
 
+    const calculatedProgress = status === 'done' ? 100 : status === 'todo' ? 0 : progress;
+
     if (modalMode === 'create') {
       await addActivity({
         title,
@@ -559,6 +566,7 @@ function App() {
         endDate,
         status,
         priority,
+        progress: calculatedProgress,
         username: assignee,
         assignedBy,
         teamId: viewingTeam ? viewingTeam.id : undefined
@@ -572,6 +580,7 @@ function App() {
         endDate,
         status,
         priority,
+        progress: calculatedProgress,
         username: assignee,
         assignedBy,
       };
@@ -616,7 +625,7 @@ function App() {
   };
 
   // Filter activities based on user role and selected filter
-  const isAdmin = user?.username.toLowerCase() === 'admin';
+  const isAdmin = user?.username.toLowerCase() === 'admin' || user?.role === 'admin';
 
   // Send a heartbeat every few seconds saying "I'm here, looking at X" —
   // this is what powers the online/viewing indicators. Presence has no
@@ -741,28 +750,54 @@ function App() {
               />
             </div>
 
-            {showPassword && (
-              <div className="form-group animate-fade-in">
-                <label className="form-label">Contraseña de Admin</label>
-                <div style={{ position: 'relative' }}>
-                  <input
-                    type="password"
-                    className="form-input"
-                    placeholder="Escribe admin..."
-                    value={passwordInput}
-                    onChange={(e) => setPasswordInput(e.target.value)}
-                    style={{ paddingLeft: '2.5rem' }}
-                    required
-                  />
-                  <span className="material-symbols-rounded" style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', fontSize: '20px' }}>lock</span>
+            <div className={`auth-expandable-field ${isNewUserPrompt ? 'is-expanded' : ''}`}>
+              <div className="auth-expandable-content">
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label">Nombre y Apellido</label>
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type="text"
+                      className="form-input"
+                      placeholder="Ej. Juan Pérez"
+                      value={fullNameInput}
+                      onChange={(e) => setFullNameInput(e.target.value)}
+                      style={{ paddingLeft: '2.5rem' }}
+                      autoFocus={isNewUserPrompt}
+                      required={isNewUserPrompt}
+                    />
+                    <span className="material-symbols-rounded" style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', fontSize: '20px' }}>badge</span>
+                  </div>
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.4rem' }}>
+                    Usuario nuevo detectado. Por favor ingresa tu Nombre y Apellido para completar tu registro.
+                  </p>
                 </div>
               </div>
-            )}
+            </div>
+
+            <div className={`auth-expandable-field ${showPassword ? 'is-expanded' : ''}`}>
+              <div className="auth-expandable-content">
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label">Contraseña de Admin</label>
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type="password"
+                      className="form-input"
+                      placeholder="Escribe admin..."
+                      value={passwordInput}
+                      onChange={(e) => setPasswordInput(e.target.value)}
+                      style={{ paddingLeft: '2.5rem' }}
+                      required={showPassword}
+                    />
+                    <span className="material-symbols-rounded" style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', fontSize: '20px' }}>lock</span>
+                  </div>
+                </div>
+              </div>
+            </div>
 
             {errorMsg && <p className="form-error">{errorMsg}</p>}
 
             <button type="submit" className="btn btn-primary" style={{ gap: '0.5rem' }}>
-              <span className="material-symbols-rounded">login</span> Iniciar Sesión
+              <span className="material-symbols-rounded">{isNewUserPrompt ? 'person_add' : 'login'}</span> {isNewUserPrompt ? 'Registrar y Entrar' : 'Iniciar Sesión'}
             </button>
           </form>
         </div>
@@ -804,11 +839,6 @@ function App() {
             <span className="material-symbols-rounded">{theme === 'dark' ? 'light_mode' : 'dark_mode'}</span>
           </button>
           {(!isAdmin || viewingUserAsAdmin || viewingTeam) && (
-            <button className="btn btn-secondary" onClick={() => { setIsCalendarModalOpen(true); setSyncStatus('idle'); setSyncMessage(''); }} style={{ gap: '0.4rem', width: 'auto' }}>
-              <span className="material-symbols-rounded">calendar_today</span> Sincronizar
-            </button>
-          )}
-          {(!isAdmin || viewingUserAsAdmin || viewingTeam) && (
             <button className="btn btn-secondary" onClick={() => setIsHistoryModalOpen(true)} style={{ gap: '0.4rem', width: 'auto' }}>
               <span className="material-symbols-rounded">history</span> Historial
             </button>
@@ -819,9 +849,14 @@ function App() {
             </button>
           )}
           {isAdmin && !viewingTeam ? (
-            <button className="btn btn-primary" onClick={() => openCreateModal()} style={{ gap: '0.4rem' }}>
-              <span className="material-symbols-rounded">add</span> Asignar Nueva Tarea
-            </button>
+            <>
+              <button className="btn btn-secondary" onClick={openCreateUserModal} style={{ gap: '0.4rem', width: 'auto', whiteSpace: 'nowrap' }}>
+                <span className="material-symbols-rounded">person_add</span> Nuevo Usuario
+              </button>
+              <button className="btn btn-primary" onClick={() => openCreateModal()} style={{ gap: '0.4rem', whiteSpace: 'nowrap' }}>
+                <span className="material-symbols-rounded">add</span> Asignar Nueva Tarea
+              </button>
+            </>
           ) : (
             <button className="btn btn-primary" onClick={() => openCreateModal()} style={{ gap: '0.4rem' }}>
               <span className="material-symbols-rounded">add</span> {viewingTeam ? 'Nueva Tarea de Equipo' : 'Crear Actividad'}
@@ -908,7 +943,9 @@ function App() {
           {isUsersPanelOpen && (() => {
             const nonAdminUsers = users.filter(u => u.username.toLowerCase() !== 'admin');
             const query = userSearchQuery.trim().toLowerCase();
-            const filteredUsers = query ? nonAdminUsers.filter(u => u.username.toLowerCase().includes(query)) : nonAdminUsers;
+            const filteredUsers = query
+              ? nonAdminUsers.filter(u => (u.fullName || u.username).toLowerCase().includes(query) || u.username.toLowerCase().includes(query))
+              : nonAdminUsers;
             return (
               <div className="glass-panel users-panel animate-fade-in">
                 <div className="users-panel-toolbar">
@@ -938,6 +975,7 @@ function App() {
                   <div className="user-chip-grid">
                     {filteredUsers.map(u => {
                       const isActive = activeUserFilters.has(u.username.toLowerCase());
+                      const displayName = u.fullName || u.username;
                       return (
                         <div key={u.username} className="user-chip-wrapper">
                           <button
@@ -945,15 +983,15 @@ function App() {
                             className={`user-chip ${isActive ? 'is-active' : ''}`}
                             onClick={() => toggleUserFilter(u.username)}
                             aria-pressed={isActive}
-                            title={`Filtrar por: ${u.username}`}
+                            title={`Filtrar por: ${displayName}`}
                           >
-                            {u.username}
+                            {displayName}
                           </button>
                           <button
                             type="button"
                             className="user-chip-delete"
                             onClick={(e) => handleDeleteUser(u.username, e)}
-                            title={`Eliminar a ${u.username}`}
+                            title={`Eliminar a ${displayName}`}
                           >
                             <span className="material-symbols-rounded" style={{ fontSize: '12px' }}>close</span>
                           </button>
@@ -972,7 +1010,10 @@ function App() {
               Mostrando solo:{' '}
               {[
                 ...[...activeStatusFilters].map(s => s === 'todo' ? 'Por Realizar' : s === 'doing' ? 'En Proceso' : s === 'done' ? 'Completadas' : 'Canceladas'),
-                ...[...activeUserFilters].map(key => users.find(u => u.username.toLowerCase() === key)?.username || key),
+                ...[...activeUserFilters].map(key => {
+                  const found = users.find(u => u.username.toLowerCase() === key);
+                  return found ? (found.fullName || found.username) : key;
+                }),
               ].join(', ')}
               <button type="button" onClick={() => { setActiveStatusFilters(new Set()); setActiveUserFilters(new Set()); }}>Limpiar filtro</button>
             </div>
@@ -1017,9 +1058,13 @@ function App() {
                       <div className="team-card-name">{t.name}</div>
                       <div className="team-card-meta">{t.memberUsernames.length} miembros · {teamTaskCount} {teamTaskCount === 1 ? 'tarea' : 'tareas'}</div>
                       <div className="team-card-members">
-                        {t.memberUsernames.slice(0, 5).map(m => (
-                          <span key={m} className="team-member-avatar" title={m}>{m.substring(0, 2).toUpperCase()}</span>
-                        ))}
+                        {t.memberUsernames.slice(0, 5).map(m => {
+                          const u = users.find(user => user.username.toLowerCase() === m.toLowerCase());
+                          const nameToUse = u?.fullName || m;
+                          return (
+                            <span key={m} className="team-member-avatar" title={nameToUse}>{nameToUse.substring(0, 2).toUpperCase()}</span>
+                          );
+                        })}
                         {t.memberUsernames.length > 5 && (
                           <span className="team-member-avatar team-member-avatar-more">+{t.memberUsernames.length - 5}</span>
                         )}
@@ -1052,6 +1097,7 @@ function App() {
             {users.filter(u => u.username.toLowerCase() !== 'admin' && isUserShown(u.username)).map(u => {
               const userActs = activities.filter(a => a.username.toLowerCase() === u.username.toLowerCase() && !a.teamId);
               const userIsOnline = onlineNow.some(p => p.username.toLowerCase() === u.username.toLowerCase());
+              const displayName = u.fullName || u.username;
               return (
                 <div
                   className="admin-user-row"
@@ -1063,7 +1109,8 @@ function App() {
                   <div className="admin-user-info">
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: '100%' }}>
                       {userIsOnline && <span className="online-now-dot" title="En línea ahora" />}
-                      <span className="admin-username" style={{ wordBreak: 'break-all' }}>{u.username}</span>
+                      <span className="admin-username" style={{ wordBreak: 'break-all' }}>{displayName}</span>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>({u.username})</span>
                       <button
                         type="button"
                         className="btn btn-secondary btn-icon-only delete-user-btn"
@@ -1123,9 +1170,14 @@ function App() {
                           <div key={a.id} className="admin-mini-card mini-doing">
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.15rem', gap: '0.4rem' }}>
                               <div className="admin-mini-card-title">{a.title}</div>
-                              <span className={`priority-badge prio-${prio}`} style={{ fontSize: '0.55rem', padding: '0.05rem 0.25rem' }}>
-                                {prio.substring(0, 1).toUpperCase()}
-                              </span>
+                              <div style={{ display: 'flex', gap: '0.2rem', alignItems: 'center' }}>
+                                <span className="priority-badge" style={{ fontSize: '0.55rem', padding: '0.05rem 0.25rem', color: 'var(--color-doing)' }}>
+                                  {a.progress ?? 50}%
+                                </span>
+                                <span className={`priority-badge prio-${prio}`} style={{ fontSize: '0.55rem', padding: '0.05rem 0.25rem' }}>
+                                  {prio.substring(0, 1).toUpperCase()}
+                                </span>
+                              </div>
                             </div>
                             {a.assignedBy && (
                               <div className="admin-mini-card-by">★ Por: {a.assignedBy}</div>
@@ -1319,10 +1371,16 @@ function App() {
                       <h4 className="task-title">{act.title}</h4>
                       <span className="material-symbols-rounded" style={{ fontSize: '16px', color: 'var(--text-muted)', flexShrink: 0 }}>edit</span>
                     </div>
-                    <div style={{ display: 'flex', gap: '0.4rem' }}>
+                    <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
                       <span className={`priority-badge prio-${act.priority || 'media'}`}>
                         {act.priority || 'media'}
                       </span>
+                      <span className="priority-badge" style={{ background: 'var(--color-primary-glow)', color: 'var(--color-doing)', fontWeight: '600' }}>
+                        {act.progress ?? 50}% avance
+                      </span>
+                    </div>
+                    <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', overflow: 'hidden', marginTop: '0.2rem' }}>
+                      <div style={{ width: `${act.progress ?? 50}%`, height: '100%', background: 'var(--color-doing)', transition: 'width 0.3s ease' }} />
                     </div>
                   </div>
                   <div className="task-expand">
@@ -1517,6 +1575,41 @@ function App() {
                 </select>
               </div>
 
+              {status === 'doing' && (
+                <div className="form-group animate-fade-in">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <label className="form-label">Porcentaje de Avance</label>
+                    <span style={{ fontSize: '0.9rem', fontWeight: '700', color: 'var(--color-doing)' }}>
+                      {progress}%
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '0.25rem' }}>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      step="5"
+                      className="form-input"
+                      style={{ padding: '0', cursor: 'pointer', height: '8px' }}
+                      value={progress}
+                      onChange={(e) => setProgress(Number(e.target.value))}
+                    />
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      className="form-input"
+                      style={{ width: '70px', padding: '0.4rem', textAlign: 'center' }}
+                      value={progress}
+                      onChange={(e) => {
+                        const val = Math.min(100, Math.max(0, Number(e.target.value) || 0));
+                        setProgress(val);
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
               <div className="form-group">
                 <label className="form-label">Prioridad</label>
                 <select
@@ -1680,83 +1773,75 @@ function App() {
         </div>
       )}
 
-      {/* Google Calendar Sync Modal */}
-      {isCalendarModalOpen && (
-        <div className="modal-overlay" onClick={() => setIsCalendarModalOpen(false)}>
-          <div className="glass-panel modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '500px' }}>
+
+      {/* Admin Create User Modal */}
+      {isCreateUserModalOpen && (
+        <div className="modal-overlay" onClick={() => setIsCreateUserModalOpen(false)}>
+          <div className="glass-panel modal-content animate-scale-in" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '450px' }}>
             <div className="modal-header">
               <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span className="material-symbols-rounded" style={{ color: 'var(--color-primary)' }}>calendar_today</span>
-                Sincronizar con Google Calendar
+                <span className="material-symbols-rounded" style={{ color: 'var(--color-primary)' }}>person_add</span>
+                Agregar Nuevo Usuario
               </h3>
-              <button type="button" className="modal-close" onClick={() => setIsCalendarModalOpen(false)} aria-label="Cerrar">
+              <button type="button" className="modal-close" onClick={() => setIsCreateUserModalOpen(false)} aria-label="Cerrar">
                 <span className="material-symbols-rounded">close</span>
               </button>
             </div>
 
-            <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', lineHeight: '1.4' }}>
-                Esto creará eventos correspondientes a tus tareas activas en tu Google Calendar principal.
-              </p>
-
+            <form onSubmit={handleSaveNewUser} style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div className="form-group">
-                <label className="form-label">Google Client ID (Opcional)</label>
+                <label className="form-label">Nombre de Usuario (Username)</label>
                 <input
                   type="text"
                   className="form-input"
-                  value={googleClientId}
-                  onChange={(e) => setGoogleClientId(e.target.value)}
-                  placeholder="Pegar tu Google OAuth Client ID aquí..."
+                  placeholder="Ej. carlos99"
+                  value={newUsernameInput}
+                  onChange={(e) => setNewUsernameInput(e.target.value)}
+                  required
                 />
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem', display: 'block' }}>
-                  Deja en blanco para ejecutar una <strong>demostración simulada</strong>, o introduce un Client ID de Google Cloud para realizar una vinculación real.
-                </span>
               </div>
 
-              {syncStatus !== 'idle' && (
-                <div style={{
-                  padding: '1rem',
-                  borderRadius: '12px',
-                  background: syncStatus === 'syncing' ? 'var(--color-primary-glow)' : syncStatus === 'success' ? 'rgba(var(--color-done-rgb), 0.1)' : 'rgba(var(--color-danger-rgb), 0.1)',
-                  border: `1px solid ${syncStatus === 'syncing' ? 'var(--color-primary)' : syncStatus === 'success' ? 'var(--color-done)' : 'var(--color-danger)'}`,
-                  color: syncStatus === 'syncing' ? 'var(--text-main)' : syncStatus === 'success' ? 'var(--color-done)' : 'var(--color-danger)',
-                  fontSize: '0.85rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                  lineHeight: '1.4'
-                }}>
-                  {syncStatus === 'syncing' && (
-                    <span className="material-symbols-rounded animate-spin">sync</span>
-                  )}
-                  {syncStatus === 'success' && (
-                    <span className="material-symbols-rounded">check_circle</span>
-                  )}
-                  {syncStatus === 'error' && (
-                    <span className="material-symbols-rounded">error</span>
-                  )}
-                  <span>{syncMessage}</span>
-                </div>
+              <div className="form-group">
+                <label className="form-label">Nombre y Apellido</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="Ej. Carlos Mendoza"
+                  value={newFullNameInput}
+                  onChange={(e) => setNewFullNameInput(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Tipo de Usuario</label>
+                <select
+                  className="form-input"
+                  value={newUserRole}
+                  onChange={(e) => setNewUserRole(e.target.value as 'admin' | 'user')}
+                >
+                  <option value="user">Usuario Normal</option>
+                  <option value="admin">Usuario Administrador</option>
+                </select>
+              </div>
+
+              {createUserError && (
+                <p className="form-error" style={{ margin: '0' }}>{createUserError}</p>
               )}
 
               <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setIsCalendarModalOpen(false)} style={{ width: 'auto' }}>
-                  Cerrar
+                <button type="button" className="btn btn-secondary" onClick={() => setIsCreateUserModalOpen(false)} style={{ width: 'auto' }}>
+                  Cancelar
                 </button>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={syncWithGoogleCalendar}
-                  disabled={syncStatus === 'syncing'}
-                  style={{ width: 'auto', gap: '0.4rem' }}
-                >
-                  <span className="material-symbols-rounded">sync</span> Sincronizar Ahora
+                <button type="submit" className="btn btn-primary" style={{ width: 'auto' }}>
+                  Crear Usuario
                 </button>
               </div>
-            </div>
+            </form>
           </div>
         </div>
       )}
+
       {/* Custom Confirm Modal */}
       {confirmConfig.isOpen && (
         <div className="modal-overlay" onClick={() => setConfirmConfig(prev => ({ ...prev, isOpen: false }))}>

@@ -5,3 +5,4 @@ dist-ssr
 .git
 .DS_Store
 npm-debug.log*
+kanban.db

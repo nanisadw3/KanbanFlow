@@ -76,6 +76,12 @@ CSS custom properties (design tokens) drive both themes; dark is default. No har
 
 `syncWithGoogleCalendar` (~line 259) is optional and self-contained: if no `googleClientId` is set (stored in `localStorage`, entered via the sync modal), it runs a **simulated** sync (just a timeout + success message) — no real network calls. If a Client ID is provided, it uses Google Identity Services (`window.google.accounts.oauth2`, loaded via a `<script>` tag in `index.html`) to get an OAuth token, then POSTs each of the current view's `displayedActivities` to the Google Calendar API as events. This is entirely client-side; there's no server component and no token storage beyond the browser session.
 
+## Visual Bug Debugging with Playwright
+
+- Whenever the user asks to fix or debug a visual bug, UI layout issue, element alignment, or browser rendering behavior:
+  - Always use Playwright (`npx playwright`) or browser automation tools to inspect the page visually, capture screenshots/trace UI state, or run automated verification scripts.
+  - Verify visually and empirically using browser rendering before declaring the visual bug fixed.
+
 ## Known non-goals / things not to add unprompted
 
 - No real authentication/authorization system — the current username-only login is intentional for now.
@@ -84,4 +90,10 @@ CSS custom properties (design tokens) drive both themes; dark is default. No har
 
 ## Docker / deployment
 
-`Dockerfile` is a two-stage build (`node:22-alpine` build stage → `nginx:1.27-alpine` serve stage). `nginx.conf` has an SPA `try_files` fallback to `index.html` even though the app currently only uses hash routing (which doesn't need server-side fallback) — kept as a safety net in case path-based routes are ever added. Firebase config must be passed as `--build-arg`s at image build time (see README), not as container runtime env vars — Vite has already inlined them into the JS bundle by the time the container runs.
+`Dockerfile` is a two-stage build (`node:22-alpine` build → `node:22-alpine` runtime — no nginx). The runtime stage runs `npm run server` (`tsx server/index.ts`), and that same Express process serves the built frontend (`dist/`, copied from the build stage) via `express.static` plus a catch-all `sendFile(index.html)` fallback — see the `distPath`/`existsSync` block near the bottom of `server/index.ts`. One container, one port (`PORT`, default 3001). `kanban.db` is written to `DB_PATH` (default `/app/data/kanban.db` in the image, overridden in dev via env var to the old `../kanban.db` default), which is declared as a `VOLUME` so it survives rebuilds — mount it, or the database resets on every redeploy.
+
+`sqlite3`'s native addon needs a C/C++ toolchain to compile, so both Dockerfile stages `apk add python3 make g++` before `npm ci`; the runtime stage `apk del`s them again afterward to keep the final image slim (the compiled `.node` binary doesn't need the toolchain present at runtime, only during install). `tsx` lives in `dependencies`, not `devDependencies` — the runtime stage installs with `--omit=dev` and still needs it to run the server.
+
+`VITE_BACKEND_URL` is optional at build time. `src/db.ts` defaults to `window.location.origin` in a production build (correct for this single-container setup, where the API and frontend share a port) and to `http://localhost:3001` in dev (`import.meta.env.DEV`, since Vite's dev server and the API run on different ports locally). Pass `--build-arg VITE_BACKEND_URL=...` only for a split deployment where the frontend and API are on different hosts.
+
+Firebase env vars (`VITE_FIREBASE_*`) are no longer needed for the Docker build — `src/firebase.ts` is dead code left over from the pre-migration Firestore setup; nothing imports it. Safe to delete along with the `firebase` npm dependency whenever someone gets to it, just not done yet.
