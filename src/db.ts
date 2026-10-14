@@ -125,13 +125,30 @@ export const clearTeamActivities = async (teamId: string): Promise<void> => {
 
 export const loginUser = async (username: string, fullName?: string, role?: 'admin' | 'user'): Promise<User> => {
   const user: User = { username, fullName, role, lastLogin: new Date().toISOString() };
-  socket.emit('user:login', { username, fullName, role });
+  socket.emit('user:login', { username, fullName });
   return user;
 };
 
-export const createUserByAdmin = async (username: string, fullName: string, role: 'admin' | 'user'): Promise<void> => {
-  socket.emit('user:create', { username, fullName, role });
+export const createUserByAdmin = async (username: string, fullName: string, role: 'admin' | 'user', password?: string): Promise<void> => {
+  socket.emit('user:create', { username, fullName, role, password });
 };
+
+// --- Admin passwords (verified by the server; hashes never reach the client) ---
+
+export type AuthResult = { ok: boolean; error?: 'bad_password' | 'too_short' | 'timeout' };
+
+const emitWithAck = (event: string, payload: object): Promise<AuthResult> =>
+  new Promise(resolve => {
+    socket.timeout(8000).emit(event, payload, (err: Error | null, res?: AuthResult) => {
+      resolve(err || !res ? { ok: false, error: 'timeout' } : res);
+    });
+  });
+
+export const loginAdmin = (username: string, password: string): Promise<AuthResult> =>
+  emitWithAck('auth:login', { username, password });
+
+export const changeAdminPassword = (username: string, currentPassword: string, newPassword: string): Promise<AuthResult> =>
+  emitWithAck('auth:changePassword', { username, currentPassword, newPassword });
 
 export const deleteUser = async (username: string): Promise<void> => {
   socket.emit('user:delete', username);

@@ -6,6 +6,8 @@ import {
   subscribeTeams,
   subscribePresence,
   loginUser,
+  loginAdmin,
+  changeAdminPassword,
   createUserByAdmin,
   addActivity,
   updateActivityStatus,
@@ -69,6 +71,13 @@ function App() {
   const [newUsernameInput, setNewUsernameInput] = useState('');
   const [newFullNameInput, setNewFullNameInput] = useState('');
   const [newUserRole, setNewUserRole] = useState<'admin' | 'user'>('user');
+  const [newUserPassword, setNewUserPassword] = useState('');
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [currentPasswordInput, setCurrentPasswordInput] = useState('');
+  const [newPasswordInput, setNewPasswordInput] = useState('');
+  const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
+  const [passwordFormError, setPasswordFormError] = useState('');
+  const [passwordFormSuccess, setPasswordFormSuccess] = useState(false);
   const [createUserError, setCreateUserError] = useState('');
 
   // Teams state
@@ -270,7 +279,8 @@ function App() {
     setUsernameInput(val);
     setIsNewUserPrompt(false);
     setFullNameInput('');
-    if (val.toLowerCase() === 'admin') {
+    const typed = val.trim().toLowerCase();
+    if (typed === 'admin' || users.some(u => u.username.toLowerCase() === typed && u.role === 'admin')) {
       setShowPassword(true);
     } else {
       setShowPassword(false);
@@ -288,17 +298,25 @@ function App() {
       return;
     }
 
-    if (cleanUsername.toLowerCase() === 'admin') {
-      if (passwordInput !== 'admin') {
-        setErrorMsg('Contraseña de administrador incorrecta');
+    const existingUser = users.find(u => u.username.toLowerCase() === cleanUsername.toLowerCase());
+
+    // Admin accounts (the built-in "admin" or any user with the admin role)
+    // must present their password; the server is what checks it.
+    if (cleanUsername.toLowerCase() === 'admin' || existingUser?.role === 'admin') {
+      if (!passwordInput) {
+        setErrorMsg('Escribe la contraseña de administrador');
         return;
       }
-      const loggedIn = await loginUser(cleanUsername);
+      const auth = await loginAdmin(existingUser?.username ?? cleanUsername, passwordInput);
+      if (!auth.ok) {
+        setErrorMsg(auth.error === 'timeout' ? 'No se pudo conectar con el servidor' : 'Contraseña de administrador incorrecta');
+        return;
+      }
+      const loggedIn = await loginUser(existingUser?.username ?? cleanUsername, existingUser?.fullName, 'admin');
       setUser(loggedIn);
+      setPasswordInput('');
       return;
     }
-
-    const existingUser = users.find(u => u.username.toLowerCase() === cleanUsername.toLowerCase());
 
     if (!existingUser && !isNewUserPrompt) {
       setIsNewUserPrompt(true);
@@ -313,7 +331,7 @@ function App() {
     }
 
     const loggedIn = await loginUser(
-      cleanUsername, 
+      existingUser?.username ?? cleanUsername,
       isNewUserPrompt ? fullNameInput.trim() : existingUser?.fullName,
       existingUser?.role || (cleanUsername.toLowerCase() === 'admin' ? 'admin' : 'user')
     );
@@ -326,8 +344,43 @@ function App() {
     setNewUsernameInput('');
     setNewFullNameInput('');
     setNewUserRole('user');
+    setNewUserPassword('');
     setCreateUserError('');
     setIsCreateUserModalOpen(true);
+  };
+
+  const openPasswordModal = () => {
+    setCurrentPasswordInput('');
+    setNewPasswordInput('');
+    setConfirmPasswordInput('');
+    setPasswordFormError('');
+    setPasswordFormSuccess(false);
+    setIsPasswordModalOpen(true);
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordFormError('');
+    if (newPasswordInput.length < 4) {
+      setPasswordFormError('La nueva contraseña debe tener al menos 4 caracteres.');
+      return;
+    }
+    if (newPasswordInput !== confirmPasswordInput) {
+      setPasswordFormError('La confirmación no coincide con la nueva contraseña.');
+      return;
+    }
+    if (!user) return;
+    const res = await changeAdminPassword(user.username, currentPasswordInput, newPasswordInput);
+    if (!res.ok) {
+      setPasswordFormError(
+        res.error === 'timeout' ? 'No se pudo conectar con el servidor.'
+        : res.error === 'too_short' ? 'La nueva contraseña debe tener al menos 4 caracteres.'
+        : 'La contraseña actual es incorrecta.'
+      );
+      return;
+    }
+    setPasswordFormSuccess(true);
+    setTimeout(() => setIsPasswordModalOpen(false), 1200);
   };
 
   const handleSaveNewUser = async (e: React.FormEvent) => {
@@ -348,7 +401,12 @@ function App() {
       return;
     }
 
-    await createUserByAdmin(cleanUsername, cleanFullName, newUserRole);
+    if (newUserRole === 'admin' && newUserPassword.length < 4) {
+      setCreateUserError('La contraseña del administrador debe tener al menos 4 caracteres.');
+      return;
+    }
+
+    await createUserByAdmin(cleanUsername, cleanFullName, newUserRole, newUserRole === 'admin' ? newUserPassword : undefined);
     setIsCreateUserModalOpen(false);
   };
 
@@ -783,7 +841,7 @@ function App() {
                     <input
                       type="password"
                       className="form-input"
-                      placeholder="Escribe admin..."
+                      placeholder="Escribe tu contraseña..."
                       value={passwordInput}
                       onChange={(e) => setPasswordInput(e.target.value)}
                       style={{ paddingLeft: '2.5rem' }}
@@ -851,6 +909,9 @@ function App() {
           )}
           {isAdmin && !viewingTeam ? (
             <>
+              <button className="btn btn-secondary btn-icon-only" onClick={openPasswordModal} title="Cambiar mi contraseña">
+                <span className="material-symbols-rounded">key</span>
+              </button>
               <button className="btn btn-secondary" onClick={openCreateUserModal} style={{ gap: '0.4rem', width: 'auto', whiteSpace: 'nowrap' }}>
                 <span className="material-symbols-rounded">person_add</span> Nuevo Usuario
               </button>
@@ -1867,6 +1928,21 @@ function App() {
                 </select>
               </div>
 
+              {newUserRole === 'admin' && (
+                <div className="form-group">
+                  <label className="form-label">Contraseña del Administrador</label>
+                  <input
+                    type="password"
+                    className="form-input"
+                    placeholder="Mínimo 4 caracteres"
+                    autoComplete="new-password"
+                    value={newUserPassword}
+                    onChange={(e) => setNewUserPassword(e.target.value)}
+                    required
+                  />
+                </div>
+              )}
+
               {createUserError && (
                 <p className="form-error" style={{ margin: '0' }}>{createUserError}</p>
               )}
@@ -1877,6 +1953,75 @@ function App() {
                 </button>
                 <button type="submit" className="btn btn-primary" style={{ width: 'auto' }}>
                   Crear Usuario
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Change password modal (admins change their own password) */}
+      {isPasswordModalOpen && (
+        <div className="modal-overlay" onClick={() => setIsPasswordModalOpen(false)}>
+          <div className="glass-panel modal-content animate-scale-in" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '420px' }}>
+            <div className="modal-header">
+              <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span className="material-symbols-rounded" style={{ color: 'var(--color-primary)' }}>key</span>
+                Cambiar mi contraseña
+              </h3>
+              <button type="button" className="modal-close" onClick={() => setIsPasswordModalOpen(false)} aria-label="Cerrar">
+                <span className="material-symbols-rounded">close</span>
+              </button>
+            </div>
+
+            <form onSubmit={handleChangePassword} style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div className="form-group">
+                <label className="form-label">Contraseña actual</label>
+                <input
+                  type="password"
+                  className="form-input"
+                  autoComplete="current-password"
+                  value={currentPasswordInput}
+                  onChange={(e) => setCurrentPasswordInput(e.target.value)}
+                  required
+                  autoFocus
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Nueva contraseña</label>
+                <input
+                  type="password"
+                  className="form-input"
+                  placeholder="Mínimo 4 caracteres"
+                  autoComplete="new-password"
+                  value={newPasswordInput}
+                  onChange={(e) => setNewPasswordInput(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Confirmar nueva contraseña</label>
+                <input
+                  type="password"
+                  className="form-input"
+                  autoComplete="new-password"
+                  value={confirmPasswordInput}
+                  onChange={(e) => setConfirmPasswordInput(e.target.value)}
+                  required
+                />
+              </div>
+
+              {passwordFormError && <p className="form-error" style={{ margin: '0' }}>{passwordFormError}</p>}
+              {passwordFormSuccess && (
+                <p style={{ margin: 0, color: 'var(--color-done)', fontSize: '0.85rem', fontWeight: 600 }}>Contraseña actualizada.</p>
+              )}
+
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setIsPasswordModalOpen(false)} style={{ width: 'auto' }}>
+                  Cancelar
+                </button>
+                <button type="submit" className="btn btn-primary" style={{ width: 'auto' }} disabled={passwordFormSuccess}>
+                  Guardar contraseña
                 </button>
               </div>
             </form>

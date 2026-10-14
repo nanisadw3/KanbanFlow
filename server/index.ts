@@ -6,6 +6,7 @@ import sqlite3 from 'sqlite3';
 import { open, Database } from 'sqlite';
 import path from 'path';
 import { existsSync, mkdirSync } from 'fs';
+import { scrypt as scryptCb, randomBytes, timingSafeEqual } from 'crypto';
 
 interface Activity {
   id: string;
@@ -137,7 +138,14 @@ async function initSQLite() {
     // Column might already exist
   }
 
+  try {
+    await db.exec("ALTER TABLE users ADD COLUMN passwordHash TEXT;");
+  } catch {
+    // Column might already exist
+  }
+
   await seedDatabaseIfEmpty();
+  await ensureAdminPasswords();
 }
 
 async function seedDatabaseIfEmpty() {
@@ -146,6 +154,55 @@ async function seedDatabaseIfEmpty() {
 
   const now = new Date().toISOString();
   await db.run('INSERT INTO users (username, fullName, role, lastLogin) VALUES (?, ?, ?, ?)', ['admin', 'Administrador Principal', 'admin', now]);
+}
+
+// usernames are case-insensitive for the app (the client always compares them
+// lowercased) but SQLite's PRIMARY KEY is case-sensitive, so "Ruben" and "ruben"
+// would become two users. Reuse the row that already exists, whatever its casing.
+async function canonicalUsername(username: string): Promise<string> {
+  const row = await db.get<{ username: string }>('SELECT username FROM users WHERE username = ? COLLATE NOCASE', [username]);
+  return row ? row.username : username;
+}
+
+// --- Admin passwords --------------------------------------------------------
+// Stored as "salt:hash" (hex), scrypt with a per-user random salt. The hash never
+// leaves the server: getUsers() selects explicit columns, so `users:all` has none.
+const DEFAULT_ADMIN_PASSWORD = 'admin';
+const MIN_PASSWORD_LENGTH = 4;
+
+const scryptAsync = (password: string, salt: Buffer) =>
+  new Promise<Buffer>((resolve, reject) =>
+    scryptCb(password, salt, 64, (err, key) => (err ? reject(err) : resolve(key)))
+  );
+
+async function hashPassword(password: string): Promise<string> {
+  const salt = randomBytes(16);
+  const key = await scryptAsync(password, salt);
+  return `${salt.toString('hex')}:${key.toString('hex')}`;
+}
+
+async function verifyPassword(password: string, stored: string): Promise<boolean> {
+  const [saltHex, keyHex] = stored.split(':');
+  if (!saltHex || !keyHex) return false;
+  const expected = Buffer.from(keyHex, 'hex');
+  const actual = await scryptAsync(password, Buffer.from(saltHex, 'hex'));
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+const isAdminRow = (row: { username: string; role: string | null }) =>
+  row.role === 'admin' || row.username.toLowerCase() === 'admin';
+
+// An admin with no password yet (migrated from before passwords existed, or
+// promoted straight in the database) starts with the default one.
+async function ensureAdminPasswords() {
+  const rows = await db.all<{ username: string; role: string | null; passwordHash: string | null }[]>(
+    'SELECT username, role, passwordHash FROM users'
+  );
+  for (const row of rows) {
+    if (isAdminRow(row) && !row.passwordHash) {
+      await db.run('UPDATE users SET passwordHash = ? WHERE username = ?', [await hashPassword(DEFAULT_ADMIN_PASSWORD), row.username]);
+    }
+  }
 }
 
 // Helpers to fetch and emit dataset updates
@@ -162,7 +219,7 @@ async function getActivities(): Promise<Activity[]> {
 }
 
 async function getUsers(): Promise<User[]> {
-  return await db.all<User[]>('SELECT * FROM users');
+  return await db.all<User[]>('SELECT username, fullName, role, lastLogin FROM users');
 }
 
 async function getTeams(): Promise<Team[]> {
@@ -285,31 +342,86 @@ io.on('connection', async (socket) => {
   });
 
   // User handlers
-  socket.on('user:login', async (payload: { username: string; fullName?: string; role?: 'admin' | 'user' } | string) => {
-    const username = typeof payload === 'string' ? payload : payload.username;
+
+  // Slow down password guessing from one connection: each consecutive failure
+  // waits a bit longer before answering.
+  let failedAuthAttempts = 0;
+  const failAuth = async (error: string) => {
+    failedAuthAttempts += 1;
+    await new Promise(r => setTimeout(r, Math.min(failedAuthAttempts * 500, 4000)));
+    return { ok: false, error };
+  };
+
+  socket.on('auth:login', async (
+    payload: { username?: string; password?: string },
+    ack?: (res: { ok: boolean; error?: string }) => void
+  ) => {
+    const reply = ack ?? (() => {});
+    const username = typeof payload?.username === 'string' ? payload.username : '';
+    const password = typeof payload?.password === 'string' ? payload.password : '';
+    const row = await db.get<{ username: string; role: string | null; passwordHash: string | null }>(
+      'SELECT username, role, passwordHash FROM users WHERE username = ? COLLATE NOCASE', [username]
+    );
+    if (!row || !isAdminRow(row)) return reply(await failAuth('bad_password'));
+    if (!row.passwordHash) return reply(await failAuth('bad_password'));
+    if (!(await verifyPassword(password, row.passwordHash))) return reply(await failAuth('bad_password'));
+    failedAuthAttempts = 0;
+    reply({ ok: true });
+  });
+
+  socket.on('auth:changePassword', async (
+    payload: { username?: string; currentPassword?: string; newPassword?: string },
+    ack?: (res: { ok: boolean; error?: string }) => void
+  ) => {
+    const reply = ack ?? (() => {});
+    const username = typeof payload?.username === 'string' ? payload.username : '';
+    const currentPassword = typeof payload?.currentPassword === 'string' ? payload.currentPassword : '';
+    const newPassword = typeof payload?.newPassword === 'string' ? payload.newPassword : '';
+    const row = await db.get<{ username: string; role: string | null; passwordHash: string | null }>(
+      'SELECT username, role, passwordHash FROM users WHERE username = ? COLLATE NOCASE', [username]
+    );
+    if (!row || !isAdminRow(row) || !row.passwordHash) return reply(await failAuth('bad_password'));
+    if (!(await verifyPassword(currentPassword, row.passwordHash))) return reply(await failAuth('bad_password'));
+    if (newPassword.length < MIN_PASSWORD_LENGTH) return reply({ ok: false, error: 'too_short' });
+    await db.run('UPDATE users SET passwordHash = ? WHERE username = ?', [await hashPassword(newPassword), row.username]);
+    failedAuthAttempts = 0;
+    reply({ ok: true });
+  });
+
+  socket.on('user:login', async (payload: { username: string; fullName?: string } | string) => {
+    const username = await canonicalUsername(typeof payload === 'string' ? payload : payload.username);
     const fullName = typeof payload === 'string' ? undefined : payload.fullName;
-    const role = (typeof payload === 'string' ? undefined : payload.role) || (username.toLowerCase() === 'admin' ? 'admin' : 'user');
+    // Role is decided server-side: a login never grants or changes it (admins are
+    // made through user:create or the database), apart from the built-in "admin".
+    const role = username.toLowerCase() === 'admin' ? 'admin' : 'user';
     const lastLogin = new Date().toISOString();
 
     await db.run(
       `INSERT INTO users (username, fullName, role, lastLogin) VALUES (?, ?, ?, ?)
-       ON CONFLICT(username) DO UPDATE SET 
-         fullName = COALESCE(excluded.fullName, users.fullName), 
-         role = COALESCE(excluded.role, users.role), 
+       ON CONFLICT(username) DO UPDATE SET
+         fullName = COALESCE(excluded.fullName, users.fullName),
          lastLogin = excluded.lastLogin`,
       [username, fullName || null, role, lastLogin]
     );
+    await ensureAdminPasswords();
     await broadcastUsers();
   });
 
-  socket.on('user:create', async (payload: { username: string; fullName: string; role: 'admin' | 'user' }) => {
-    const { username, fullName, role } = payload;
+  socket.on('user:create', async (payload: { username: string; fullName: string; role: 'admin' | 'user'; password?: string }) => {
+    const { fullName } = payload;
+    const role = payload.role === 'admin' ? 'admin' : 'user';
+    const username = await canonicalUsername(payload.username);
     const lastLogin = new Date().toISOString();
+    const password = typeof payload.password === 'string' ? payload.password : '';
+    if (role === 'admin' && password.length < MIN_PASSWORD_LENGTH) return;
+    const passwordHash = role === 'admin' ? await hashPassword(password) : null;
     await db.run(
-      `INSERT INTO users (username, fullName, role, lastLogin) VALUES (?, ?, ?, ?)
-       ON CONFLICT(username) DO UPDATE SET fullName = excluded.fullName, role = excluded.role`,
-      [username, fullName, role || 'user', lastLogin]
+      `INSERT INTO users (username, fullName, role, lastLogin, passwordHash) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(username) DO UPDATE SET fullName = excluded.fullName, role = excluded.role,
+         passwordHash = COALESCE(excluded.passwordHash, users.passwordHash)`,
+      [username, fullName, role, lastLogin, passwordHash]
     );
+    await ensureAdminPasswords();
     await broadcastUsers();
   });
 
