@@ -14,6 +14,7 @@ export interface Activity {
   progress?: number;
   teamId?: string;
   completedAt?: string;
+  archived?: boolean;
 }
 
 export interface User {
@@ -98,6 +99,10 @@ export const addActivity = async (activity: Omit<Activity, 'id' | 'createdAt'>):
 
 export const updateActivityStatus = async (id: string, status: Activity['status'], progress?: number): Promise<void> => {
   socket.emit('activity:updateStatus', { id, status, progress });
+};
+
+export const setActivityArchived = async (id: string, archived: boolean): Promise<void> => {
+  socket.emit('activity:setArchived', { id, archived });
 };
 
 export const updateActivity = async (updatedAct: Activity): Promise<void> => {

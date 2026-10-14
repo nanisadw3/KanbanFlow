@@ -695,11 +695,12 @@ body.dark-theme .btn-primary {
 
 .user-chip-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 0.5rem;
   max-height: 190px;
   overflow-y: auto;
-  padding-right: 0.25rem;
+  /* room for the quick-delete badge, which sticks out 6px past each chip */
+  padding: 0.5rem 0.5rem 0.25rem 0;
 }
 
 .user-chip {
@@ -716,14 +717,23 @@ body.dark-theme .btn-primary {
   cursor: pointer;
   transition: var(--transition-smooth);
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  text-align: center;
+  line-height: 1.25;
+  min-height: 2.4rem;
+}
+
+.user-chip-name {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: break-word;
 }
 
 .user-chip:hover {
   border-color: var(--border-color-hover);
   color: var(--text-main);
-  transform: translateY(-1px);
+  background: rgba(var(--overlay-rgb), 0.08);
 }
 
 .user-chip:active {
@@ -840,8 +850,7 @@ body.dark-theme .btn-primary {
   font-size: 0.8rem;
   color: var(--color-primary);
   font-weight: 600;
-  margin-top: -1.5rem;
-  margin-bottom: 1.5rem;
+  margin: 1rem 0;
 }
 
 .filter-hint button {
@@ -875,7 +884,7 @@ body.dark-theme .btn-primary {
 .admin-user-row {
   position: relative;
   display: grid;
-  grid-template-columns: 200px 1fr;
+  grid-template-columns: minmax(240px, 280px) 1fr;
   gap: 2rem;
   padding: 1.5rem 1.25rem 1.5rem 1.5rem;
   margin: 0.25rem -1.25rem;
@@ -955,10 +964,86 @@ body.dark-theme .delete-user-btn:hover {
   background: rgba(242, 139, 130, 0.12) !important;
 }
 
+.admin-user-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.admin-user-names {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.admin-user-head .delete-user-btn {
+  flex-shrink: 0;
+}
+
+.admin-user-handle {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
 .admin-username {
   font-weight: 700;
   font-size: 1.1rem;
   color: var(--text-main);
+  overflow-wrap: break-word;
+  line-height: 1.25;
+}
+
+.archive-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: rgba(var(--overlay-rgb), 0.04);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+
+.archive-btn .material-symbols-rounded {
+  font-size: 15px;
+}
+
+.archive-btn:hover {
+  border-color: var(--color-done);
+  color: var(--color-done);
+}
+
+.history-row-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.history-row-actions {
+  display: flex;
+  gap: 0.4rem;
+  margin-left: auto;
+}
+
+.archive-btn-danger:hover {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.archived-badge {
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
 }
 
 .user-status-columns {

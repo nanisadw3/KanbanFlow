@@ -9,6 +9,7 @@ import {
   createUserByAdmin,
   addActivity,
   updateActivityStatus,
+  setActivityArchived,
   updateActivity,
   deleteActivity,
   deleteUser,
@@ -671,7 +672,7 @@ function App() {
   // without a completedAt yet (older data) stay visible until they get one.
   const ONE_DAY_MS = 24 * 60 * 60 * 1000;
   const isDoneVisibleOnBoard = (a: Activity) =>
-    !a.completedAt || now - new Date(a.completedAt).getTime() < ONE_DAY_MS;
+    !a.archived && (!a.completedAt || now - new Date(a.completedAt).getTime() < ONE_DAY_MS);
 
   // Every completed task for the current context (personal/team/supervised
   // user), newest first — this is the full Historial, not just the last day.
@@ -985,7 +986,7 @@ function App() {
                             aria-pressed={isActive}
                             title={`Filtrar por: ${displayName}`}
                           >
-                            {displayName}
+                            <span className="user-chip-name">{displayName}</span>
                           </button>
                           <button
                             type="button"
@@ -1107,10 +1108,12 @@ function App() {
                   style={{ cursor: 'pointer', transition: 'var(--transition-smooth)' }}
                 >
                   <div className="admin-user-info">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: '100%' }}>
+                    <div className="admin-user-head">
                       {userIsOnline && <span className="online-now-dot" title="En línea ahora" />}
-                      <span className="admin-username" style={{ wordBreak: 'break-all' }}>{displayName}</span>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>({u.username})</span>
+                      <div className="admin-user-names">
+                        <span className="admin-username">{displayName}</span>
+                        <span className="admin-user-handle">@{u.username}</span>
+                      </div>
                       <button
                         type="button"
                         className="btn btn-secondary btn-icon-only delete-user-btn"
@@ -1435,10 +1438,20 @@ function App() {
                       <h4 className="task-title">{act.title}</h4>
                       <span className="material-symbols-rounded" style={{ fontSize: '16px', color: 'var(--text-muted)', flexShrink: 0 }}>edit</span>
                     </div>
-                    <div style={{ display: 'flex', gap: '0.4rem' }}>
+                    <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', justifyContent: 'space-between' }}>
                       <span className={`priority-badge prio-${act.priority || 'media'}`}>
                         {act.priority || 'media'}
                       </span>
+                      <button
+                        type="button"
+                        className="archive-btn"
+                        draggable={false}
+                        onClick={(e) => { e.stopPropagation(); void setActivityArchived(act.id, true); }}
+                        title="Archivar: sale del tablero y queda en el Historial"
+                      >
+                        <span className="material-symbols-rounded">inventory_2</span>
+                        Archivar
+                      </button>
                     </div>
                   </div>
                   <div className="task-expand">
@@ -1668,12 +1681,41 @@ function App() {
                   <div key={a.id} className="history-row">
                     <div className="history-row-main">
                       <span className="history-row-title">{a.title}</span>
-                      <span className={`priority-badge prio-${a.priority || 'media'}`}>{a.priority || 'media'}</span>
+                      <span style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                        {a.archived && <span className="archived-badge">Archivada</span>}
+                        <span className={`priority-badge prio-${a.priority || 'media'}`}>{a.priority || 'media'}</span>
+                      </span>
                     </div>
                     {a.description && <p className="history-row-desc">{a.description}</p>}
                     <div className="history-row-meta">
                       {viewingTeam && <span className="history-row-owner">{a.username} · </span>}
                       Completada el {new Date(a.completedAt || a.createdAt).toLocaleDateString()}
+                      <span className="history-row-actions">
+                        {(a.archived || !isDoneVisibleOnBoard(a)) && (
+                          <button
+                            type="button"
+                            className="archive-btn"
+                            onClick={() => void (a.archived ? setActivityArchived(a.id, false) : updateActivityStatus(a.id, 'done'))}
+                            title="Devolver al tablero (columna Realizado)"
+                          >
+                            <span className="material-symbols-rounded">unarchive</span>
+                            Restaurar
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="archive-btn archive-btn-danger"
+                          onClick={() => showConfirm(
+                            'Eliminar Tarea',
+                            `¿Eliminar "${a.title}" para siempre? Esta acción no se puede deshacer.`,
+                            () => void deleteActivity(a.id)
+                          )}
+                          title="Eliminar definitivamente"
+                        >
+                          <span className="material-symbols-rounded">delete</span>
+                          Eliminar
+                        </button>
+                      </span>
                     </div>
                   </div>
                 ))}

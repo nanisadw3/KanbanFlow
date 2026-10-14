@@ -21,6 +21,7 @@ interface Activity {
   progress?: number | null;
   teamId?: string | null;
   completedAt?: string | null;
+  archived?: boolean;
 }
 
 interface User {
@@ -130,6 +131,12 @@ async function initSQLite() {
     // Column might already exist
   }
 
+  try {
+    await db.exec("ALTER TABLE activities ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;");
+  } catch {
+    // Column might already exist
+  }
+
   await seedDatabaseIfEmpty();
 }
 
@@ -150,6 +157,7 @@ async function getActivities(): Promise<Activity[]> {
     progress: r.progress !== null && r.progress !== undefined ? Number(r.progress) : undefined,
     teamId: r.teamId || undefined,
     completedAt: r.completedAt || undefined,
+    archived: !!r.archived,
   }));
 }
 
@@ -229,7 +237,12 @@ io.on('connection', async (socket) => {
     else if (status === 'todo') nextProgress = 0;
     else if (status === 'doing' && typeof nextProgress !== 'number') nextProgress = 50;
 
-    await db.run('UPDATE activities SET status = ?, completedAt = ?, progress = ? WHERE id = ?', [status, completedAt, nextProgress ?? null, id]);
+    await db.run('UPDATE activities SET status = ?, completedAt = ?, progress = ?, archived = 0 WHERE id = ?', [status, completedAt, nextProgress ?? null, id]);
+    await broadcastActivities();
+  });
+
+  socket.on('activity:setArchived', async ({ id, archived }: { id: string; archived: boolean }) => {
+    await db.run("UPDATE activities SET archived = ? WHERE id = ? AND status = 'done'", [archived ? 1 : 0, id]);
     await broadcastActivities();
   });
 
