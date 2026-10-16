@@ -488,21 +488,6 @@ body.dark-theme .btn-primary {
   background-color: rgba(var(--color-danger-rgb), 0.06);
 }
 
-.overdue-user-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.2rem;
-  margin-left: 0.6rem;
-  padding: 0.1rem 0.5rem;
-  border-radius: 999px;
-  font-size: 0.7rem;
-  font-weight: 700;
-  vertical-align: middle;
-  color: var(--color-danger);
-  background: rgba(var(--color-danger-rgb), 0.14);
-  border: 1px solid rgba(var(--color-danger-rgb), 0.45);
-}
-
 .stat-icon-overdue {
   background: rgba(var(--color-danger-rgb), 0.18);
   color: var(--color-danger);
@@ -1337,6 +1322,29 @@ body.dark-theme .prio-baja {
   color: var(--text-main);
 }
 
+.stats-row-name .meta {
+  margin-left: 0.6rem;
+}
+
+.stats-hero-top {
+  display: flex;
+  white-space: nowrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.rate-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--c);
+  background: rgba(var(--overlay-rgb), 0.06);
+}
+
 .stats-hero-label {
   color: var(--text-muted);
   font-size: 0.9rem;
@@ -1412,9 +1420,10 @@ body.dark-theme .prio-baja {
 }
 
 .stats-row-rate {
-  font-weight: 700;
-  color: var(--color-primary);
-  font-size: 0.85rem;
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  align-items: center;
 }
 
 .stats-bar {

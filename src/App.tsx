@@ -950,19 +950,23 @@ function App() {
       <div className="auth-wrapper">
         <div className="glass-panel auth-card animate-fade-in">
           <h1 className="auth-logo">Kanban<span className="auth-logo-accent">Flow</span></h1>
-          <p className="auth-subtitle">Gestiona tus tareas de manera ágil y fluida</p>
+          <p className="auth-subtitle">Gestiona tus tareas</p>
 
           <form onSubmit={handleLogin}>
             <div className="form-group">
-              <FieldLabel icon="badge">Nombre de Usuario</FieldLabel>
-              <input
-                type="text"
-                className="form-input"
-                placeholder="Escribe tu nombre..."
-                value={usernameInput}
-                onChange={handleUsernameChange}
-                required
-              />
+              <FieldLabel icon="person">Nombre de Usuario</FieldLabel>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="Escribe tu nombre..."
+                  value={usernameInput}
+                  onChange={handleUsernameChange}
+                  style={{ paddingLeft: '2.5rem' }}
+                  required
+                />
+                <span className="material-symbols-rounded" style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', fontSize: '20px' }}>person</span>
+              </div>
             </div>
 
             <div className={`auth-expandable-field ${showPassword ? 'is-expanded' : ''}`}>
@@ -988,7 +992,7 @@ function App() {
             {errorMsg && <p className="form-error">{errorMsg}</p>}
 
             <button type="submit" className="btn btn-primary" style={{ gap: '0.5rem' }}>
-              <span className="material-symbols-rounded">login</span> Iniciar Sesión
+              <span className="material-symbols-rounded">login</span> Entrar
             </button>
           </form>
         </div>

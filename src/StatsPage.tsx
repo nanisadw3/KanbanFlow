@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { initDB, subscribeActivities, subscribeUsers } from './db';
 import type { Activity } from './db';
 import './App.css';
+import { Icon, Meta } from './ui';
 import { todayString, countOpenAndOverdue, overdueRate } from './dates';
 
 function StatsPage({ onBack }: { onBack: () => void }) {
@@ -81,7 +82,7 @@ function StatsPage({ onBack }: { onBack: () => void }) {
           <button
             className="btn btn-secondary btn-icon-only"
             onClick={onBack}
-            title="Volver al Tablero"
+            data-tip="Volver al Tablero"
             style={{ width: '40px', height: '40px', padding: '0', borderRadius: '50%' }}
           >
             <span className="material-symbols-rounded">arrow_back</span>
@@ -94,34 +95,49 @@ function StatsPage({ onBack }: { onBack: () => void }) {
         <button
           className="btn btn-secondary btn-icon-only"
           onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
-          title="Cambiar Tema"
+          data-tip="Cambiar Tema"
         >
           <span className="material-symbols-rounded">{theme === 'dark' ? 'light_mode' : 'dark_mode'}</span>
         </button>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
-        <div className="glass-panel stats-hero" style={{ margin: '0', borderLeft: '4px solid var(--color-todo)' }}>
+        <div className="glass-panel stats-hero" style={{ margin: '0', borderLeft: '4px solid var(--color-todo)' }} data-tip="Tasa de Por Realizar">
+          <div className="stats-hero-top">
+            <Icon name="assignment" size={22} style={{ color: 'var(--color-todo)' }} />
+            <span className="stats-hero-label">Por hacer</span>
+          </div>
           <span className="stats-hero-value" style={{ color: 'var(--color-todo)' }}>{overallTodoRate}%</span>
-          <span className="stats-hero-label">Tasa de Por Realizar</span>
         </div>
-        <div className="glass-panel stats-hero" style={{ margin: '0', borderLeft: '4px solid var(--color-doing)' }}>
+        <div className="glass-panel stats-hero" style={{ margin: '0', borderLeft: '4px solid var(--color-doing)' }} data-tip="Tasa En Proceso">
+          <div className="stats-hero-top">
+            <Icon name="schedule" size={22} style={{ color: 'var(--color-doing)' }} />
+            <span className="stats-hero-label">En curso</span>
+          </div>
           <span className="stats-hero-value" style={{ color: 'var(--color-doing)' }}>{overallDoingRate}%</span>
-          <span className="stats-hero-label">Tasa En Proceso</span>
         </div>
-        <div className="glass-panel stats-hero" style={{ margin: '0', borderLeft: '4px solid var(--color-done)' }}>
+        <div className="glass-panel stats-hero" style={{ margin: '0', borderLeft: '4px solid var(--color-done)' }} data-tip="Tasa de Finalización">
+          <div className="stats-hero-top">
+            <Icon name="check_circle" size={22} style={{ color: 'var(--color-done)' }} />
+            <span className="stats-hero-label">Hechas</span>
+          </div>
           <span className="stats-hero-value" style={{ color: 'var(--color-done)' }}>{overallRate}%</span>
-          <span className="stats-hero-label">Tasa de Finalización</span>
         </div>
-        <div className="glass-panel stats-hero" style={{ margin: '0', borderLeft: '4px solid var(--color-danger)' }}>
+        <div className="glass-panel stats-hero" style={{ margin: '0', borderLeft: '4px solid var(--color-danger)' }} data-tip="Tasa de Cancelación">
+          <div className="stats-hero-top">
+            <Icon name="cancel" size={22} style={{ color: 'var(--color-danger)' }} />
+            <span className="stats-hero-label">Canceladas</span>
+          </div>
           <span className="stats-hero-value" style={{ color: 'var(--color-danger)' }}>{overallCancelRate}%</span>
-          <span className="stats-hero-label">Tasa de Cancelación</span>
         </div>
-        <div className="glass-panel stats-hero" style={{ margin: '0', borderLeft: '4px solid var(--color-danger)' }}>
+        <div className="glass-panel stats-hero" style={{ margin: '0', borderLeft: '4px solid var(--color-danger)' }} data-tip="Retrasadas · % de las abiertas">
+          <div className="stats-hero-top">
+            <Icon name="alarm" size={22} style={{ color: 'var(--color-danger)' }} />
+            <span className="stats-hero-label">Retrasadas</span>
+          </div>
           <span className="stats-hero-value" style={{ color: 'var(--color-danger)' }}>
             {overall.overdue} <span style={{ fontSize: '1.1rem', fontWeight: 600 }}>({overallOverdueShare}%)</span>
           </span>
-          <span className="stats-hero-label">Retrasadas · % de las abiertas</span>
         </div>
       </div>
 
@@ -133,19 +149,19 @@ function StatsPage({ onBack }: { onBack: () => void }) {
         <>
           <div className="stats-legend">
             <span className="stats-legend-item">
-              <span className="stats-legend-swatch" style={{ background: 'var(--chart-todo)' }} />
+              <Icon name="assignment" size={16} style={{ color: 'var(--chart-todo)' }} />
               Por Realizar
             </span>
             <span className="stats-legend-item">
-              <span className="stats-legend-swatch" style={{ background: 'var(--chart-doing)' }} />
+              <Icon name="schedule" size={16} style={{ color: 'var(--chart-doing)' }} />
               En Proceso
             </span>
             <span className="stats-legend-item">
-              <span className="stats-legend-swatch" style={{ background: 'var(--chart-done)' }} />
+              <Icon name="check_circle" size={16} style={{ color: 'var(--chart-done)' }} />
               Completadas
             </span>
             <span className="stats-legend-item">
-              <span className="stats-legend-swatch" style={{ background: 'var(--color-danger)' }} />
+              <Icon name="cancel" size={16} style={{ color: 'var(--color-danger)' }} />
               Canceladas
             </span>
           </div>
@@ -156,20 +172,14 @@ function StatsPage({ onBack }: { onBack: () => void }) {
                 <div className="stats-row-head">
                   <span className="stats-row-name">{r.displayName} <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 'normal' }}>({r.username})</span>
                     {r.overdue > 0 && (
-                      <span className="overdue-user-badge" style={{ display: 'flex', width: 'fit-content', marginLeft: 0, marginTop: '0.25rem' }} title="Tareas abiertas con la fecha de fin vencida">
-                        <span className="material-symbols-rounded" style={{ fontSize: '14px' }}>alarm</span>
-                        {r.overdue} {r.overdue === 1 ? 'retrasada' : 'retrasadas'} · {r.overdueShare}% de las abiertas
-                      </span>
+                      <Meta icon="alarm" tip={`${r.overdue} retrasadas · ${r.overdueShare}% de las abiertas`} tone="danger">{r.overdue} · {r.overdueShare}%</Meta>
                     )}
                   </span>
-                  <span className="stats-row-rate" style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                    <span style={{ color: 'var(--color-todo)', fontWeight: '600' }}>{r.todoRate}% por realizar</span>
-                    <span style={{ color: 'var(--text-muted)' }}>•</span>
-                    <span style={{ color: 'var(--color-doing)', fontWeight: '600' }}>{r.doingRate}% en proceso</span>
-                    <span style={{ color: 'var(--text-muted)' }}>•</span>
-                    <span style={{ color: 'var(--color-done)', fontWeight: '600' }}>{r.rate}% completado</span>
-                    <span style={{ color: 'var(--text-muted)' }}>•</span>
-                    <span style={{ color: 'var(--color-danger)', fontWeight: '600' }}>{r.cancelRate}% cancelado</span>
+                  <span className="stats-row-rate">
+                    <span className="rate-chip" style={{ ['--c' as string]: 'var(--color-todo)' }} data-tip="Por realizar"><Icon name="assignment" size={14} />{r.todoRate}%</span>
+                    <span className="rate-chip" style={{ ['--c' as string]: 'var(--color-doing)' }} data-tip="En proceso"><Icon name="schedule" size={14} />{r.doingRate}%</span>
+                    <span className="rate-chip" style={{ ['--c' as string]: 'var(--color-done)' }} data-tip="Completado"><Icon name="check_circle" size={14} />{r.rate}%</span>
+                    <span className="rate-chip" style={{ ['--c' as string]: 'var(--color-danger)' }} data-tip="Cancelado"><Icon name="cancel" size={14} />{r.cancelRate}%</span>
                   </span>
                 </div>
                 {r.total === 0 ? (
@@ -207,12 +217,12 @@ function StatsPage({ onBack }: { onBack: () => void }) {
                   </div>
                 )}
                 <div className="stats-row-counts">
-                  <span>Por Realizar: {r.todo}</span>
-                  <span>En Proceso: {r.doing}</span>
-                  <span>Completadas: {r.done}</span>
-                  <span>Canceladas: {r.cancelled}</span>
-                  <span style={r.overdue > 0 ? { color: 'var(--color-danger)', fontWeight: 700 } : undefined}>Retrasadas: {r.overdue}</span>
-                  <span>Total: {r.total}</span>
+                  <Meta icon="assignment" tip="Por realizar">{r.todo}</Meta>
+                  <Meta icon="schedule" tip="En proceso">{r.doing}</Meta>
+                  <Meta icon="check_circle" tip="Completadas">{r.done}</Meta>
+                  <Meta icon="cancel" tip="Canceladas">{r.cancelled}</Meta>
+                  <Meta icon="alarm" tip="Retrasadas" tone={r.overdue > 0 ? 'danger' : undefined}>{r.overdue}</Meta>
+                  <Meta icon="functions" tip="Total">{r.total}</Meta>
                 </div>
               </div>
             ))}
