@@ -32,6 +32,12 @@ import StatsPage from './StatsPage';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const isEmailValid = (v: string) => EMAIL_RE.test(v.trim());
 
+const todayString = () => {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [usernameInput, setUsernameInput] = useState('');
@@ -100,6 +106,11 @@ function App() {
   // Presence — who else is looking at the app right now, and where.
   const [presence, setPresence] = useState<PresenceEntry[]>([]);
   const [presenceTick, setPresenceTick] = useState(0); // forces re-evaluation of staleness even with no new writes
+
+  // "Today" as YYYY-MM-DD, refreshed every minute so overdue tasks turn red without a reload.
+  const [today, setToday] = useState(todayString);
+  const isOverdue = (a: Activity) =>
+    !!a.endDate && a.endDate < today && a.status !== 'done' && a.status !== 'cancelled';
 
   // History of completed tasks
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
@@ -246,6 +257,11 @@ function App() {
   // this every few seconds purely to re-check which entries have gone stale.
   useEffect(() => {
     const t = setInterval(() => setPresenceTick(x => x + 1), 5000);
+    return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    const t = setInterval(() => setToday(todayString()), 60_000);
     return () => clearInterval(t);
   }, []);
 
@@ -1279,7 +1295,7 @@ function App() {
                       {userActs.filter(a => a.status === 'todo').map(a => {
                         const prio = a.priority || 'media';
                         return (
-                          <div key={a.id} className="admin-mini-card mini-todo">
+                          <div key={a.id} className={`admin-mini-card mini-todo ${isOverdue(a) ? 'overdue' : ''}`}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.15rem', gap: '0.4rem' }}>
                               <div className="admin-mini-card-title">{a.title}</div>
                               <span className={`priority-badge prio-${prio}`} style={{ fontSize: '0.55rem', padding: '0.05rem 0.25rem' }}>
@@ -1305,7 +1321,7 @@ function App() {
                       {userActs.filter(a => a.status === 'doing').map(a => {
                         const prio = a.priority || 'media';
                         return (
-                          <div key={a.id} className="admin-mini-card mini-doing">
+                          <div key={a.id} className={`admin-mini-card mini-doing ${isOverdue(a) ? 'overdue' : ''}`}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.15rem', gap: '0.4rem' }}>
                               <div className="admin-mini-card-title">{a.title}</div>
                               <div style={{ display: 'flex', gap: '0.2rem', alignItems: 'center' }}>
@@ -1440,7 +1456,7 @@ function App() {
               {displayedActivities.filter(a => a.status === 'todo').map(act => (
                 <div
                   key={act.id}
-                  className="task-card border-todo animate-fade-in"
+                  className={`task-card border-todo animate-fade-in ${isOverdue(act) ? 'overdue' : ''}`}
                   draggable
                   onDragStart={(e) => handleDragStart(e, act.id)}
                   onDragEnd={handleDragEnd}
@@ -1455,6 +1471,9 @@ function App() {
                       <span className={`priority-badge prio-${act.priority || 'media'}`}>
                         {act.priority || 'media'}
                       </span>
+                      {isOverdue(act) && (
+                        <span className="overdue-badge" title={`Debía terminar el ${act.endDate}`}>Retrasada</span>
+                      )}
                     </div>
                   </div>
                   <div className="task-expand">
@@ -1498,7 +1517,7 @@ function App() {
               {displayedActivities.filter(a => a.status === 'doing').map(act => (
                 <div
                   key={act.id}
-                  className="task-card border-doing animate-fade-in"
+                  className={`task-card border-doing animate-fade-in ${isOverdue(act) ? 'overdue' : ''}`}
                   draggable
                   onDragStart={(e) => handleDragStart(e, act.id)}
                   onDragEnd={handleDragEnd}
@@ -1513,6 +1532,9 @@ function App() {
                       <span className={`priority-badge prio-${act.priority || 'media'}`}>
                         {act.priority || 'media'}
                       </span>
+                      {isOverdue(act) && (
+                        <span className="overdue-badge" title={`Debía terminar el ${act.endDate}`}>Retrasada</span>
+                      )}
                       <span className="priority-badge" style={{ background: 'var(--color-primary-glow)', color: 'var(--color-doing)', fontWeight: '600' }}>
                         {act.progress ?? 50}% avance
                       </span>
