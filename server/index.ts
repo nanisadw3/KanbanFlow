@@ -7,6 +7,7 @@ import { open, Database } from 'sqlite';
 import path from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { scrypt as scryptCb, randomBytes, timingSafeEqual } from 'crypto';
+import { normalizeEmail } from './email.ts';
 
 interface Activity {
   id: string;
@@ -30,6 +31,7 @@ interface User {
   fullName?: string;
   role?: 'admin' | 'user';
   lastLogin: string;
+  email?: string | null;
 }
 
 interface Team {
@@ -144,6 +146,12 @@ async function initSQLite() {
     // Column might already exist
   }
 
+  try {
+    await db.exec("ALTER TABLE users ADD COLUMN email TEXT;");
+  } catch {
+    // Column might already exist
+  }
+
   await seedDatabaseIfEmpty();
   await ensureAdminPasswords();
 }
@@ -219,7 +227,7 @@ async function getActivities(): Promise<Activity[]> {
 }
 
 async function getUsers(): Promise<User[]> {
-  return await db.all<User[]>('SELECT username, fullName, role, lastLogin FROM users');
+  return await db.all<User[]>('SELECT username, fullName, role, lastLogin, email FROM users');
 }
 
 async function getTeams(): Promise<Team[]> {
@@ -388,27 +396,31 @@ io.on('connection', async (socket) => {
     reply({ ok: true });
   });
 
-  socket.on('user:login', async (payload: { username: string; fullName?: string } | string) => {
+  socket.on('user:login', async (payload: { username: string; fullName?: string; email?: string } | string) => {
     const username = await canonicalUsername(typeof payload === 'string' ? payload : payload.username);
     const fullName = typeof payload === 'string' ? undefined : payload.fullName;
+    const email = typeof payload === 'string' ? null : normalizeEmail(payload.email);
     // Role is decided server-side: a login never grants or changes it (admins are
     // made through user:create or the database), apart from the built-in "admin".
     const role = username.toLowerCase() === 'admin' ? 'admin' : 'user';
     const lastLogin = new Date().toISOString();
 
     await db.run(
-      `INSERT INTO users (username, fullName, role, lastLogin) VALUES (?, ?, ?, ?)
+      `INSERT INTO users (username, fullName, role, lastLogin, email) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(username) DO UPDATE SET
          fullName = COALESCE(excluded.fullName, users.fullName),
+         email = COALESCE(users.email, excluded.email),
          lastLogin = excluded.lastLogin`,
-      [username, fullName || null, role, lastLogin]
+      [username, fullName || null, role, lastLogin, email]
     );
     await ensureAdminPasswords();
     await broadcastUsers();
   });
 
-  socket.on('user:create', async (payload: { username: string; fullName: string; role: 'admin' | 'user'; password?: string }) => {
+  socket.on('user:create', async (payload: { username: string; fullName: string; role: 'admin' | 'user'; password?: string; email?: string }) => {
     const { fullName } = payload;
+    const email = normalizeEmail(payload.email);
+    if (!email) return;
     const role = payload.role === 'admin' ? 'admin' : 'user';
     const username = await canonicalUsername(payload.username);
     const lastLogin = new Date().toISOString();
@@ -416,13 +428,27 @@ io.on('connection', async (socket) => {
     if (role === 'admin' && password.length < MIN_PASSWORD_LENGTH) return;
     const passwordHash = role === 'admin' ? await hashPassword(password) : null;
     await db.run(
-      `INSERT INTO users (username, fullName, role, lastLogin, passwordHash) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(username) DO UPDATE SET fullName = excluded.fullName, role = excluded.role,
+      `INSERT INTO users (username, fullName, role, lastLogin, passwordHash, email) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(username) DO UPDATE SET fullName = excluded.fullName, role = excluded.role, email = excluded.email,
          passwordHash = COALESCE(excluded.passwordHash, users.passwordHash)`,
-      [username, fullName, role, lastLogin, passwordHash]
+      [username, fullName, role, lastLogin, passwordHash, email]
     );
     await ensureAdminPasswords();
     await broadcastUsers();
+  });
+
+  socket.on('user:setEmail', async (
+    payload: { username?: string; email?: string },
+    ack?: (res: { ok: boolean; error?: string }) => void
+  ) => {
+    const reply = ack ?? (() => {});
+    const email = normalizeEmail(payload?.email);
+    if (!email) return reply({ ok: false, error: 'invalid_email' });
+    const username = typeof payload?.username === 'string' ? payload.username : '';
+    const result = await db.run('UPDATE users SET email = ? WHERE username = ? COLLATE NOCASE', [email, username]);
+    if (!result.changes) return reply({ ok: false, error: 'not_found' });
+    await broadcastUsers();
+    reply({ ok: true });
   });
 
   socket.on('user:delete', async (username: string) => {

@@ -8,7 +8,8 @@
     "server": "tsx server/index.ts",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:server": "node --import tsx --test server/*.test.ts"
   },
   "dependencies": {
     "cors": "^2.8.6",
