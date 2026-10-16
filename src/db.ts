@@ -155,6 +155,28 @@ export const changeAdminPassword = (username: string, currentPassword: string, n
 export const setUserEmail = (username: string, email: string): Promise<AuthResult> =>
   emitWithAck('user:setEmail', { username, email });
 
+// --- Mail settings (admin panel). The server never sends the SMTP password back; changing
+// or testing the settings needs the calling admin's password. ---
+
+export interface MailSettings { host: string; port: number; user: string; from: string; hasPassword: boolean }
+export interface MailAck { ok: boolean; error?: string; message?: string; enabled?: boolean; settings?: MailSettings; to?: string }
+
+const askMail = (event: string, payload: object): Promise<MailAck> =>
+  new Promise(resolve => {
+    socket.timeout(15000).emit(event, payload, (err: Error | null, res?: MailAck) => {
+      resolve(err || !res ? { ok: false, error: 'timeout' } : res);
+    });
+  });
+
+export const getMailSettings = (): Promise<MailAck> => askMail('settings:getMail', {});
+
+export const saveMailSettings = (payload: {
+  adminUsername: string; adminPassword: string; host: string; port: string; user: string; pass: string; from: string;
+}): Promise<MailAck> => askMail('settings:saveMail', payload);
+
+export const testMailSettings = (adminUsername: string, adminPassword: string): Promise<MailAck> =>
+  askMail('settings:testMail', { adminUsername, adminPassword });
+
 export const deleteUser = async (username: string): Promise<void> => {
   socket.emit('user:delete', username);
 };

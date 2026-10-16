@@ -12,6 +12,7 @@ A real-time, multi-user Kanban board built with React + TypeScript + Node.js (SQ
 - **Teams** — group users into teams with a shared Kanban board; task assignment is restricted to that team's members.
 - **Auto-archive / Historial** — completed tasks stay on the live board for 1 day, then quietly move to a per-context "Historial" view (still there, just off the busy board).
 - **Email notices** — every user has a required email; when an admin creates a task for someone they get an email, and a one-time email when one of their tasks becomes overdue. Overdue tasks are also highlighted in red on the board (see [Email notifications](#email-notifications)).
+- **Auto-complete at 100%** — raising a task's progress to 100 moves it to "Realizado" by itself.
 - **Light/dark theme**, persisted in `localStorage`.
 
 ## Tech stack
@@ -49,7 +50,7 @@ Notices are sent by the server from a **single SMTP account** (not from each adm
 - **New task** — when an admin creates a task assigned to another user who has an email.
 - **Overdue task** — once per task, the day after its end date, if it isn't done or cancelled. The server checks every 5 minutes. Changing the end date or reopening a done/cancelled task re-arms the notice.
 
-Configure it with environment variables (never stored in the database or git):
+Configure it from the admin panel (**envelope button → "Correo de avisos"**): SMTP server, port, login user, app password and sender. Saving or sending a test email needs the admin's own password. The server never sends the stored SMTP password back to the browser. Values saved in the panel live in the `settings` table of `kanban.db` (the password in plain text — SMTP needs the real value — so treat `kanban.db` and its backups as secret) and take priority over the environment variables below, which remain as a fallback:
 
 | Variable | Meaning |
 |---|---|
@@ -63,7 +64,7 @@ Configure it with environment variables (never stored in the database or git):
 SMTP_HOST=smtp.gmail.com SMTP_USER=avisos@tudominio.com SMTP_PASS=xxxx npm run dev
 ```
 
-Without `SMTP_HOST`/`SMTP_USER`/`SMTP_PASS` the app works normally but sends no emails (a warning is logged at startup). Users who have no email yet are asked for one when they log in.
+Without a server, user and password (panel or environment) the app works normally but sends no emails (a warning is logged at startup). Users who have no email yet are asked for one when they log in.
 
 Server-side logic has unit tests: `npm run test:server`.
 
@@ -99,6 +100,8 @@ server/
   email.ts        Email validation.
   mailer.ts       nodemailer transport + the two email templates.
   overdue.ts      Periodic overdue-task check (sends each notice once).
+  settings.ts     `settings` table: SMTP config saved from the admin panel (overrides env vars).
+  autocomplete.ts Rule that moves a task to "done" when its progress reaches 100.
   *.test.ts       node:test unit tests (`npm run test:server`).
 Dockerfile, .dockerignore   Container build/serve.
 ```

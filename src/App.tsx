@@ -10,6 +10,9 @@ import {
   changeAdminPassword,
   createUserByAdmin,
   setUserEmail,
+  getMailSettings,
+  saveMailSettings,
+  testMailSettings,
   addActivity,
   updateActivityStatus,
   setActivityArchived,
@@ -89,6 +92,16 @@ function App() {
   const [passwordFormError, setPasswordFormError] = useState('');
   const [passwordFormSuccess, setPasswordFormSuccess] = useState(false);
   const [createUserError, setCreateUserError] = useState('');
+  const [isMailModalOpen, setIsMailModalOpen] = useState(false);
+  const [mailHost, setMailHost] = useState('');
+  const [mailPort, setMailPort] = useState('587');
+  const [mailUser, setMailUser] = useState('');
+  const [mailPass, setMailPass] = useState('');
+  const [mailFrom, setMailFrom] = useState('');
+  const [mailAdminPass, setMailAdminPass] = useState('');
+  const [mailHasPassword, setMailHasPassword] = useState(false);
+  const [mailBusy, setMailBusy] = useState(false);
+  const [mailMsg, setMailMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [emailInput, setEmailInput] = useState('');            // login: usuario nuevo
   const [newUserEmail, setNewUserEmail] = useState('');        // modal "Agregar usuario"
   const [emailEditTarget, setEmailEditTarget] = useState<string | null>(null); // admin edita el correo de otro
@@ -379,6 +392,70 @@ function App() {
     setNewUserEmail('');
     setCreateUserError('');
     setIsCreateUserModalOpen(true);
+  };
+
+  const openMailModal = async () => {
+    setMailPass('');
+    setMailAdminPass('');
+    setMailMsg(null);
+    setIsMailModalOpen(true);
+    const res = await getMailSettings();
+    if (res.ok && res.settings) {
+      setMailHost(res.settings.host);
+      setMailPort(String(res.settings.port));
+      setMailUser(res.settings.user);
+      setMailFrom(res.settings.from);
+      setMailHasPassword(res.settings.hasPassword);
+    }
+  };
+
+  const mailErrorText = (res: { error?: string; message?: string }) => {
+    switch (res.error) {
+      case 'bad_password': return 'Tu contraseña de administrador es incorrecta.';
+      case 'invalid_port': return 'El puerto debe ser un número entre 1 y 65535.';
+      case 'timeout': return 'No se pudo conectar con el servidor.';
+      case 'not_configured': return 'Primero guarda la configuración (servidor, usuario y contraseña).';
+      case 'no_email': return 'Tu usuario no tiene correo registrado para recibir la prueba.';
+      case 'send_failed': return `No se pudo enviar: ${res.message ?? 'error desconocido'}`;
+      default: return 'No se pudo completar la operación.';
+    }
+  };
+
+  const handleSaveMail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    setMailBusy(true);
+    setMailMsg(null);
+    const res = await saveMailSettings({
+      adminUsername: user.username, adminPassword: mailAdminPass,
+      host: mailHost, port: mailPort, user: mailUser, pass: mailPass, from: mailFrom,
+    });
+    setMailBusy(false);
+    if (!res.ok) {
+      setMailMsg({ ok: false, text: mailErrorText(res) });
+      return;
+    }
+    if (res.settings) setMailHasPassword(res.settings.hasPassword);
+    setMailPass('');
+    setMailMsg({
+      ok: true,
+      text: res.enabled
+        ? 'Configuración guardada. Los avisos por correo están activos.'
+        : 'Configuración guardada, pero los correos siguen deshabilitados: faltan servidor, usuario o contraseña.',
+    });
+  };
+
+  const handleTestMail = async () => {
+    if (!user) return;
+    if (!mailAdminPass) {
+      setMailMsg({ ok: false, text: 'Escribe tu contraseña de administrador para enviar la prueba.' });
+      return;
+    }
+    setMailBusy(true);
+    setMailMsg(null);
+    const res = await testMailSettings(user.username, mailAdminPass);
+    setMailBusy(false);
+    setMailMsg(res.ok ? { ok: true, text: `Correo de prueba enviado a ${res.to}.` } : { ok: false, text: mailErrorText(res) });
   };
 
   const openPasswordModal = () => {
@@ -998,6 +1075,9 @@ function App() {
             <>
               <button className="btn btn-secondary btn-icon-only" onClick={openPasswordModal} title="Cambiar mi contraseña">
                 <span className="material-symbols-rounded">key</span>
+              </button>
+              <button className="btn btn-secondary btn-icon-only" onClick={() => void openMailModal()} title="Correo de avisos">
+                <span className="material-symbols-rounded">forward_to_inbox</span>
               </button>
               <button className="btn btn-secondary" onClick={openCreateUserModal} style={{ gap: '0.4rem', width: 'auto', whiteSpace: 'nowrap' }}>
                 <span className="material-symbols-rounded">person_add</span> Nuevo Usuario
@@ -2180,6 +2260,88 @@ function App() {
                 </button>
                 <button type="submit" className="btn btn-primary" style={{ width: 'auto' }} disabled={passwordFormSuccess}>
                   Guardar contraseña
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Mail settings (admin) */}
+      {isMailModalOpen && (
+        <div className="modal-overlay" onClick={() => setIsMailModalOpen(false)}>
+          <div className="glass-panel modal-content animate-scale-in" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '480px' }}>
+            <div className="modal-header">
+              <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span className="material-symbols-rounded" style={{ color: 'var(--color-primary)' }}>forward_to_inbox</span>
+                Correo de avisos
+              </h3>
+              <button type="button" className="modal-close" onClick={() => setIsMailModalOpen(false)} aria-label="Cerrar">
+                <span className="material-symbols-rounded">close</span>
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveMail} style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>
+                Cuenta SMTP desde la que salen los avisos de tareas nuevas y retrasadas.
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 110px', gap: '0.75rem' }}>
+                <div className="form-group">
+                  <label className="form-label">Servidor SMTP</label>
+                  <input type="text" className="form-input" placeholder="smtp.gmail.com" value={mailHost} onChange={(e) => setMailHost(e.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Puerto</label>
+                  <input type="number" className="form-input" min={1} max={65535} value={mailPort} onChange={(e) => setMailPort(e.target.value)} />
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Usuario (cuenta de inicio de sesión)</label>
+                <input type="text" className="form-input" placeholder="tucuenta@gmail.com" autoComplete="off" value={mailUser} onChange={(e) => setMailUser(e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Contraseña de aplicación</label>
+                <input
+                  type="password"
+                  className="form-input"
+                  autoComplete="new-password"
+                  placeholder={mailHasPassword ? 'Guardada — déjalo vacío para conservarla' : 'Contraseña de aplicación'}
+                  value={mailPass}
+                  onChange={(e) => setMailPass(e.target.value)}
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Remitente (De)</label>
+                <input type="text" className="form-input" placeholder="KanbanFlow <avisos@tudominio.com>" value={mailFrom} onChange={(e) => setMailFrom(e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Tu contraseña de administrador</label>
+                <input
+                  type="password"
+                  className="form-input"
+                  autoComplete="current-password"
+                  placeholder="Necesaria para guardar o probar"
+                  value={mailAdminPass}
+                  onChange={(e) => setMailAdminPass(e.target.value)}
+                  required
+                />
+              </div>
+
+              {mailMsg && (
+                <p
+                  className={mailMsg.ok ? undefined : 'form-error'}
+                  style={{ margin: 0, fontSize: '0.85rem', ...(mailMsg.ok ? { color: 'var(--color-done)', fontWeight: 600 } : {}) }}
+                >
+                  {mailMsg.text}
+                </p>
+              )}
+
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => void handleTestMail()} disabled={mailBusy} style={{ width: 'auto' }}>
+                  Enviar correo de prueba
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={mailBusy} style={{ width: 'auto' }}>
+                  Guardar
                 </button>
               </div>
             </form>
