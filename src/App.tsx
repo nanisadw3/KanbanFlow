@@ -9,6 +9,7 @@ import {
   loginAdmin,
   changeAdminPassword,
   createUserByAdmin,
+  setUserEmail,
   addActivity,
   updateActivityStatus,
   setActivityArchived,
@@ -27,6 +28,9 @@ import type { Activity, User, Team, PresenceEntry } from './db';
 // Using Material Symbols Rounded via Google Fonts, no Lucide React imports needed
 import './App.css';
 import StatsPage from './StatsPage';
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const isEmailValid = (v: string) => EMAIL_RE.test(v.trim());
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -79,6 +83,11 @@ function App() {
   const [passwordFormError, setPasswordFormError] = useState('');
   const [passwordFormSuccess, setPasswordFormSuccess] = useState(false);
   const [createUserError, setCreateUserError] = useState('');
+  const [emailInput, setEmailInput] = useState('');            // login: usuario nuevo
+  const [newUserEmail, setNewUserEmail] = useState('');        // modal "Agregar usuario"
+  const [emailEditTarget, setEmailEditTarget] = useState<string | null>(null); // admin edita el correo de otro
+  const [emailDialogValue, setEmailDialogValue] = useState('');
+  const [emailDialogError, setEmailDialogError] = useState('');
 
   // Teams state
   const [teams, setTeams] = useState<Team[]>([]);
@@ -328,16 +337,22 @@ function App() {
         setErrorMsg('Por favor escribe tu Nombre y Apellido');
         return;
       }
+      if (!isEmailValid(emailInput)) {
+        setErrorMsg('Escribe un correo electrónico válido');
+        return;
+      }
     }
 
     const loggedIn = await loginUser(
       existingUser?.username ?? cleanUsername,
       isNewUserPrompt ? fullNameInput.trim() : existingUser?.fullName,
-      existingUser?.role || (cleanUsername.toLowerCase() === 'admin' ? 'admin' : 'user')
+      existingUser?.role || (cleanUsername.toLowerCase() === 'admin' ? 'admin' : 'user'),
+      isNewUserPrompt ? emailInput.trim() : undefined
     );
     setUser(loggedIn);
     setIsNewUserPrompt(false);
     setFullNameInput('');
+    setEmailInput('');
   };
 
   const openCreateUserModal = () => {
@@ -345,6 +360,7 @@ function App() {
     setNewFullNameInput('');
     setNewUserRole('user');
     setNewUserPassword('');
+    setNewUserEmail('');
     setCreateUserError('');
     setIsCreateUserModalOpen(true);
   };
@@ -401,12 +417,17 @@ function App() {
       return;
     }
 
+    if (!isEmailValid(newUserEmail)) {
+      setCreateUserError('Escribe un correo electrónico válido.');
+      return;
+    }
+
     if (newUserRole === 'admin' && newUserPassword.length < 4) {
       setCreateUserError('La contraseña del administrador debe tener al menos 4 caracteres.');
       return;
     }
 
-    await createUserByAdmin(cleanUsername, cleanFullName, newUserRole, newUserRole === 'admin' ? newUserPassword : undefined);
+    await createUserByAdmin(cleanUsername, cleanFullName, newUserRole, newUserEmail.trim(), newUserRole === 'admin' ? newUserPassword : undefined);
     setIsCreateUserModalOpen(false);
   };
 
@@ -416,6 +437,7 @@ function App() {
     setUsernameInput('');
     setPasswordInput('');
     setFullNameInput('');
+    setEmailInput('');
     setIsNewUserPrompt(false);
     setShowPassword(false);
     handleSelectUser(null);
@@ -686,6 +708,36 @@ function App() {
   // Filter activities based on user role and selected filter
   const isAdmin = user?.username.toLowerCase() === 'admin' || user?.role === 'admin';
 
+  // Every user must have an email (it's where task notices are sent). Whoever is
+  // logged in without one gets a blocking dialog; an admin can also edit others'.
+  const currentUserRecord = user ? users.find(u => u.username.toLowerCase() === user.username.toLowerCase()) : undefined;
+  const mustSetOwnEmail = !!currentUserRecord && !currentUserRecord.email;
+  const emailDialogTarget = emailEditTarget ?? (mustSetOwnEmail ? user!.username : null);
+
+  const handleSaveEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!emailDialogTarget) return;
+    if (!isEmailValid(emailDialogValue)) {
+      setEmailDialogError('Escribe un correo electrónico válido.');
+      return;
+    }
+    const res = await setUserEmail(emailDialogTarget, emailDialogValue.trim());
+    if (!res.ok) {
+      setEmailDialogError(res.error === 'timeout' ? 'No se pudo conectar con el servidor' : 'No se pudo guardar el correo.');
+      return;
+    }
+    setEmailEditTarget(null);
+    setEmailDialogValue('');
+    setEmailDialogError('');
+  };
+
+  const openEmailEditor = (u: User, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEmailDialogValue(u.email || '');
+    setEmailDialogError('');
+    setEmailEditTarget(u.username);
+  };
+
   // Send a heartbeat every few seconds saying "I'm here, looking at X" —
   // this is what powers the online/viewing indicators. Presence has no
   // server-side expiry, so readers filter by lastSeen freshness instead.
@@ -829,6 +881,17 @@ function App() {
                   <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.4rem' }}>
                     Usuario nuevo detectado. Por favor ingresa tu Nombre y Apellido para completar tu registro.
                   </p>
+                </div>
+                <div className="form-group" style={{ marginTop: '0.75rem', marginBottom: 0 }}>
+                  <label className="form-label">Correo electrónico</label>
+                  <input
+                    type="email"
+                    className="form-input"
+                    placeholder="Ej. juan@empresa.com"
+                    value={emailInput}
+                    onChange={(e) => setEmailInput(e.target.value)}
+                    required={isNewUserPrompt}
+                  />
                 </div>
               </div>
             </div>
@@ -1177,6 +1240,14 @@ function App() {
                       </div>
                       <button
                         type="button"
+                        className="btn btn-secondary btn-icon-only edit-email-btn"
+                        onClick={(e) => openEmailEditor(u, e)}
+                        title="Editar correo"
+                      >
+                        <span className="material-symbols-rounded" style={{ fontSize: '16px' }}>mail</span>
+                      </button>
+                      <button
+                        type="button"
                         className="btn btn-secondary btn-icon-only delete-user-btn"
                         onClick={(e) => handleDeleteUser(u.username, e)}
                         title="Eliminar usuario"
@@ -1186,6 +1257,9 @@ function App() {
                     </div>
                     <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                       Última sesión: {new Date(u.lastLogin).toLocaleDateString()}
+                    </span>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                      {u.email || 'Sin correo registrado'}
                     </span>
                     <span className="column-count" style={{ width: 'fit-content', marginBottom: '0.5rem' }}>
                       {userActs.length} {userActs.length === 1 ? 'actividad' : 'actividades'}
@@ -1877,6 +1951,48 @@ function App() {
       )}
 
 
+      {/* Email dialog: blocking for a user with no email, dismissible when an admin edits someone's */}
+      {emailDialogTarget && (
+        <div className="modal-overlay" onClick={() => { if (emailEditTarget) setEmailEditTarget(null); }}>
+          <div className="glass-panel modal-content animate-scale-in" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '450px' }}>
+            <div className="modal-header">
+              <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span className="material-symbols-rounded" style={{ color: 'var(--color-primary)' }}>mail</span>
+                {emailEditTarget ? `Correo de ${emailEditTarget}` : 'Registra tu correo electrónico'}
+              </h3>
+              {emailEditTarget && (
+                <button type="button" className="modal-close" onClick={() => setEmailEditTarget(null)} aria-label="Cerrar">
+                  <span className="material-symbols-rounded">close</span>
+                </button>
+              )}
+            </div>
+            <form onSubmit={handleSaveEmail} style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {!emailEditTarget && (
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', margin: 0 }}>
+                  Necesitamos tu correo para avisarte de tareas nuevas y retrasadas.
+                </p>
+              )}
+              <div className="form-group">
+                <label className="form-label">Correo electrónico</label>
+                <input
+                  type="email"
+                  className="form-input"
+                  placeholder="Ej. juan@empresa.com"
+                  value={emailDialogValue}
+                  onChange={(e) => setEmailDialogValue(e.target.value)}
+                  autoFocus
+                  required
+                />
+              </div>
+              {emailDialogError && <p className="form-error" style={{ margin: 0 }}>{emailDialogError}</p>}
+              <div className="modal-footer">
+                <button type="submit" className="btn btn-primary" style={{ width: 'auto' }}>Guardar</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Admin Create User Modal */}
       {isCreateUserModalOpen && (
         <div className="modal-overlay" onClick={() => setIsCreateUserModalOpen(false)}>
@@ -1912,6 +2028,18 @@ function App() {
                   placeholder="Ej. Carlos Mendoza"
                   value={newFullNameInput}
                   onChange={(e) => setNewFullNameInput(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Correo electrónico</label>
+                <input
+                  type="email"
+                  className="form-input"
+                  placeholder="Ej. carlos@empresa.com"
+                  value={newUserEmail}
+                  onChange={(e) => setNewUserEmail(e.target.value)}
                   required
                 />
               </div>

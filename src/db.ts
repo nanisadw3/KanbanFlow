@@ -15,6 +15,7 @@ export interface Activity {
   teamId?: string;
   completedAt?: string;
   archived?: boolean;
+  overdueNotifiedAt?: string | null;
 }
 
 export interface User {
@@ -22,6 +23,7 @@ export interface User {
   fullName?: string;
   role?: 'admin' | 'user';
   lastLogin: string;
+  email?: string | null;
 }
 
 export interface Team {
@@ -123,19 +125,19 @@ export const clearTeamActivities = async (teamId: string): Promise<void> => {
 
 // --- Users CRUD -----------------------------------------------------------
 
-export const loginUser = async (username: string, fullName?: string, role?: 'admin' | 'user'): Promise<User> => {
+export const loginUser = async (username: string, fullName?: string, role?: 'admin' | 'user', email?: string): Promise<User> => {
   const user: User = { username, fullName, role, lastLogin: new Date().toISOString() };
-  socket.emit('user:login', { username, fullName });
+  socket.emit('user:login', { username, fullName, email });
   return user;
 };
 
-export const createUserByAdmin = async (username: string, fullName: string, role: 'admin' | 'user', password?: string): Promise<void> => {
-  socket.emit('user:create', { username, fullName, role, password });
+export const createUserByAdmin = async (username: string, fullName: string, role: 'admin' | 'user', email: string, password?: string): Promise<void> => {
+  socket.emit('user:create', { username, fullName, role, email, password });
 };
 
 // --- Admin passwords (verified by the server; hashes never reach the client) ---
 
-export type AuthResult = { ok: boolean; error?: 'bad_password' | 'too_short' | 'timeout' };
+export type AuthResult = { ok: boolean; error?: 'bad_password' | 'too_short' | 'timeout' | 'invalid_email' | 'not_found' };
 
 const emitWithAck = (event: string, payload: object): Promise<AuthResult> =>
   new Promise(resolve => {
@@ -149,6 +151,9 @@ export const loginAdmin = (username: string, password: string): Promise<AuthResu
 
 export const changeAdminPassword = (username: string, currentPassword: string, newPassword: string): Promise<AuthResult> =>
   emitWithAck('auth:changePassword', { username, currentPassword, newPassword });
+
+export const setUserEmail = (username: string, email: string): Promise<AuthResult> =>
+  emitWithAck('user:setEmail', { username, email });
 
 export const deleteUser = async (username: string): Promise<void> => {
   socket.emit('user:delete', username);
