@@ -2016,16 +2016,16 @@ body.dark-theme .prio-baja {
   font-size: calc(var(--sz, 36px) * 0.38);
   font-weight: 700;
   font-family: var(--font-display);
-  color: var(--av, var(--color-primary));
-  background: rgba(var(--av-rgb, var(--color-primary-rgb)), 0.18);
+  color: var(--av, var(--color-secondary));
+  background: rgba(var(--av-rgb, var(--color-secondary-rgb)), 0.18);
 }
 
 .avatar-online {
   position: absolute;
   right: -1px;
   bottom: -1px;
-  width: 11px;
-  height: 11px;
+  width: max(7px, calc(var(--sz, 36px) * 0.28));
+  height: max(7px, calc(var(--sz, 36px) * 0.28));
   border-radius: 50%;
   background: var(--color-done);
   border: 2px solid var(--bg-main);

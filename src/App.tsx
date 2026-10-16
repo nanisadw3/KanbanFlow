@@ -875,6 +875,7 @@ function App() {
   void presenceTick; // re-evaluate staleness on the periodic tick even without new presence writes
   const now = Date.now();
   const onlineNow = presence.filter(p => isPresenceFresh(p, now));
+  const isUserOnline = (username: string) => onlineNow.some(p => p.username.toLowerCase() === username.toLowerCase());
   const teamViewers = viewingTeam
     ? onlineNow.filter(p => p.context === `team-${viewingTeam.id}` && p.username.toLowerCase() !== user?.username.toLowerCase())
     : [];
@@ -1023,7 +1024,7 @@ function App() {
             <div className="online-now" data-tip={`En línea: ${onlineNow.map(p => p.username).join(', ')}`}>
               <span className="online-now-dot" />
               <div className="online-now-avatars">
-                {onlineNow.slice(0, 4).map(p => <Avatar key={p.username} name={p.username} size={24} />)}
+                {onlineNow.slice(0, 4).map(p => <Avatar key={p.username} name={p.username} size={24} online />)}
                 {onlineNow.length > 4 && <span className="team-member-avatar team-member-avatar-more">+{onlineNow.length - 4}</span>}
               </div>
             </div>
@@ -1525,7 +1526,7 @@ function App() {
                   onDragEnd={handleDragEnd}
                   onClick={() => openEditModal(act)}
                 >
-                  <TaskCardBody act={act} today={today} overdue={isOverdue(act)} />
+                  <TaskCardBody act={act} today={today} overdue={isOverdue(act)} ownerOnline={isUserOnline(act.username)} />
                 </div>
               ))}
             </div>
@@ -1555,7 +1556,7 @@ function App() {
                   onDragEnd={handleDragEnd}
                   onClick={() => openEditModal(act)}
                 >
-                  <TaskCardBody act={act} today={today} overdue={isOverdue(act)} showProgress />
+                  <TaskCardBody act={act} today={today} overdue={isOverdue(act)} showProgress ownerOnline={isUserOnline(act.username)} />
                 </div>
               ))}
             </div>
@@ -1585,7 +1586,7 @@ function App() {
                   onDragEnd={handleDragEnd}
                   onClick={() => openEditModal(act)}
                 >
-                  <TaskCardBody act={act} today={today} overdue={false} onArchive={() => void setActivityArchived(act.id, true)} />
+                  <TaskCardBody act={act} today={today} overdue={false} ownerOnline={isUserOnline(act.username)} onArchive={() => void setActivityArchived(act.id, true)} />
                 </div>
               ))}
             </div>

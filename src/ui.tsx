@@ -45,9 +45,6 @@ export function IconButton({
   );
 }
 
-// Stable color per person, taken from existing theme tokens.
-const AVATAR_TOKENS = ['--color-primary', '--color-done', '--color-todo', '--color-secondary', '--color-accent'];
-
 const initialsOf = (name: string): string => {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return '?';
@@ -55,20 +52,22 @@ const initialsOf = (name: string): string => {
   return (parts[0][0] + parts[1][0]).toUpperCase();
 };
 
+// Color = presence, not identity: green when online, gray otherwise. `online` is
+// undefined where presence isn't known; that renders like offline (gray) with no status text.
 export function Avatar({ name, size = 36, online }: { name: string; size?: number; online?: boolean }) {
-  let h = 0;
-  for (const ch of name.toLowerCase()) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-  const token = AVATAR_TOKENS[h % AVATAR_TOKENS.length];
+  const on = online === true;
+  const token = on ? '--color-done' : '--color-secondary';
+  const tip = online === undefined ? name : `${name} · ${on ? 'en línea' : 'desconectado'}`;
   return (
     <span
       className="avatar"
       style={{ ['--sz' as string]: `${size}px`, ['--av' as string]: `var(${token})`, ['--av-rgb' as string]: `var(${token}-rgb)` }}
-      data-tip={online ? `${name} · en línea` : name}
+      data-tip={tip}
       role="img"
-      aria-label={online ? `${name} · en línea` : name}
+      aria-label={tip}
     >
       {initialsOf(name)}
-      {online && <span className="avatar-online" />}
+      {on && <span className="avatar-online" />}
     </span>
   );
 }
@@ -149,13 +148,14 @@ export function Segmented<T extends string>({
 // Body of a board card (title, flags, progress, expandable details, footer). The wrapper
 // <div draggable …> with every drag handler stays in App.tsx.
 export function TaskCardBody({
-  act, today, overdue, showProgress, onArchive,
+  act, today, overdue, showProgress, onArchive, ownerOnline,
 }: {
   act: Activity;
   today: string;
   overdue: boolean;
   showProgress?: boolean;
   onArchive?: () => void;
+  ownerOnline?: boolean;
 }) {
   return (
     <>
@@ -198,7 +198,7 @@ export function TaskCardBody({
         <div className="task-dates">
           <TaskDates start={act.startDate} end={act.endDate} overdueDays={overdue ? daysOverdue(act.endDate, today) : undefined} />
         </div>
-        <Avatar name={act.username} size={24} />
+        <Avatar name={act.username} size={24} online={ownerOnline} />
       </div>
     </>
   );
