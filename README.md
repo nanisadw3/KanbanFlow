@@ -11,6 +11,7 @@ A real-time, multi-user Kanban board built with React + TypeScript + Node.js (SQ
 - **Admin dashboard** — clickable stat cards that double as filters, a searchable/paginated user list, per-user and per-team activity clearing, and a "Ver Productividad" page with completion-rate charts per user.
 - **Teams** — group users into teams with a shared Kanban board; task assignment is restricted to that team's members.
 - **Auto-archive / Historial** — completed tasks stay on the live board for 1 day, then quietly move to a per-context "Historial" view (still there, just off the busy board).
+- **Email notices** — every user has a required email; when an admin creates a task for someone they get an email, and a one-time email when one of their tasks becomes overdue. Overdue tasks are also highlighted in red on the board (see [Email notifications](#email-notifications)).
 - **Light/dark theme**, persisted in `localStorage`.
 
 ## Tech stack
@@ -41,6 +42,31 @@ npm run dev       # Starts backend (Socket.io/SQLite on port 3001) + Vite dev se
 
 There's no real auth — usernames are free-text. Typing `admin` reveals a password field; the admin password is `admin` (see `handleLogin` in `src/App.tsx`). Any other username logs in directly and is created on first login.
 
+## Email notifications
+
+Notices are sent by the server from a **single SMTP account** (not from each admin's own account):
+
+- **New task** — when an admin creates a task assigned to another user who has an email.
+- **Overdue task** — once per task, the day after its end date, if it isn't done or cancelled. The server checks every 5 minutes. Changing the end date or reopening a done/cancelled task re-arms the notice.
+
+Configure it with environment variables (never stored in the database or git):
+
+| Variable | Meaning |
+|---|---|
+| `SMTP_HOST` | SMTP server, e.g. `smtp.gmail.com` |
+| `SMTP_PORT` | Port (default `587`; `465` uses TLS) |
+| `SMTP_USER` / `SMTP_PASS` | SMTP login. For Gmail use an **app password**, not your account password |
+| `MAIL_FROM` | Sender shown to recipients (default `KanbanFlow <SMTP_USER>`) |
+| `TZ` | Time zone that decides when "today" rolls over (set it in Docker) |
+
+```bash
+SMTP_HOST=smtp.gmail.com SMTP_USER=avisos@tudominio.com SMTP_PASS=xxxx npm run dev
+```
+
+Without `SMTP_HOST`/`SMTP_USER`/`SMTP_PASS` the app works normally but sends no emails (a warning is logged at startup). Users who have no email yet are asked for one when they log in.
+
+Server-side logic has unit tests: `npm run test:server`.
+
 ## Docker
 
 A multi-stage `Dockerfile` builds the frontend with Vite and runs it from the same Node/Express process that serves the API and WebSockets — one container, one port, no nginx. `kanban.db` lives on a volume so it survives rebuilds/redeploys:
@@ -70,6 +96,10 @@ src/
 server/
   index.ts        Express + Socket.io + SQLite server: schema, socket handlers, and (in
                   production) serves the built frontend from the same port.
+  email.ts        Email validation.
+  mailer.ts       nodemailer transport + the two email templates.
+  overdue.ts      Periodic overdue-task check (sends each notice once).
+  *.test.ts       node:test unit tests (`npm run test:server`).
 Dockerfile, .dockerignore   Container build/serve.
 ```
 

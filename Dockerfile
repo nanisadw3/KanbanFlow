@@ -49,6 +49,9 @@ COPY server ./server
 COPY --from=build /app/dist ./dist
 
 # kanban.db lives on a volume so it survives image rebuilds/redeploys.
+# Email notices need SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, MAIL_FROM (and TZ,
+# which decides when "today" rolls over). Pass them at run time with `docker run -e ...`
+# — don't bake credentials into the image. Without them the app runs but sends no email.
 ENV PORT=3001 \
     DB_PATH=/app/data/kanban.db
 VOLUME ["/app/data"]

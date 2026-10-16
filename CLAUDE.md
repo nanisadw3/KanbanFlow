@@ -72,6 +72,15 @@ Task cards show only title + dates by default; description and "assigned by" inf
 
 CSS custom properties (design tokens) drive both themes; dark is default. No hardcoded colors — if you see a raw hex/rgb value being added to `App.css`, that's very likely a bug waiting to happen on theme switch (this happened before: `.task-title { color: #fff }` was invisible on the light theme's white cards, and dark-only `rgba(255,255,255,...)` overlays were used regardless of theme before an `--overlay-rgb` token was introduced to flip per-theme). Light mode is meant to be light-*but-grayish*, not stark white — that was an explicit user preference, not a default Vite/React look.
 
+## Email notifications and overdue tasks
+
+- `users.email` is required at the app level (login of a new user, admin "Nuevo Usuario", and a blocking dialog for anyone logged in without one) but nullable in SQLite, because existing rows have none. `user:setEmail` is the only way to change it afterwards; an admin can edit anyone's from the user row.
+- Emails go out from one SMTP account configured by `SMTP_*`/`MAIL_FROM` env vars (see README). With them missing, `mailer.enabled` is false and everything is a no-op — never assume mail was sent.
+- New-task email: `notifyNewTask` in `server/index.ts`, fired from `activity:add` only when the creator (`assignedBy`) is an admin and the assignee is someone else with an email. Fire-and-forget; failures are logged, never block task creation.
+- Overdue email: `runOverdueCheck` (`server/overdue.ts`) runs at startup and every 5 min. `activities.overdueNotifiedAt` is stamped only after a successful send, so SMTP failures and users without an email are retried. The stamp is cleared when `endDate` changes or a task leaves done/cancelled (SQL `CASE` in `activity:update` / `activity:updateStatus`).
+- The red "Retrasada" styling is computed in the client (`isOverdue` in `App.tsx`, `today` refreshed every minute) and is independent of the server's stamp.
+- Gotcha: `io.on('connection')` registers its socket handlers after awaiting the initial snapshots, so a script client that emits immediately on connect loses the event. Wait ~600 ms first when testing with a raw socket.io client.
+
 ## Google Calendar sync
 
 `syncWithGoogleCalendar` (~line 259) is optional and self-contained: if no `googleClientId` is set (stored in `localStorage`, entered via the sync modal), it runs a **simulated** sync (just a timeout + success message) — no real network calls. If a Client ID is provided, it uses Google Identity Services (`window.google.accounts.oauth2`, loaded via a `<script>` tag in `index.html`) to get an OAuth token, then POSTs each of the current view's `displayedActivities` to the Google Calendar API as events. This is entirely client-side; there's no server component and no token storage beyond the browser session.
@@ -86,7 +95,7 @@ CSS custom properties (design tokens) drive both themes; dark is default. No har
 
 - No real authentication/authorization system — the current username-only login is intentional for now.
 - No component splitting of `App.tsx` — it's one big component by accumulated decision, not oversight. If asked to refactor, confirm scope first; this file has been iterated on heavily and a refactor is a good way to reintroduce the drag-and-drop bugs above.
-- No test suite exists. Verification throughout this project's history has been `tsc --noEmit`, `npm run build`, `npx oxlint src/`, and manual/browser-automation testing — not unit tests. Don't assume `npm test` does anything meaningful.
+- No client test suite exists. `npm run test:server` (node:test via tsx) covers only the server modules `server/email.ts`, `mailer.ts` and `overdue.ts`; the client and `server/index.ts` are verified with `npx tsc --noEmit -p tsconfig.app.json`, `npm run build`, `npx oxlint src/`, and manual/browser-automation testing. `npm test` itself does nothing meaningful. Note no tsconfig covers `server/`; typecheck it with `npx tsc --noEmit --ignoreConfig --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck --allowImportingTsExtensions --esModuleInterop --strict --types node server/index.ts`.
 
 ## Docker / deployment
 
