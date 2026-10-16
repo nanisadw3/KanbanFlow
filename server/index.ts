@@ -8,7 +8,9 @@ import path from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { scrypt as scryptCb, randomBytes, timingSafeEqual } from 'crypto';
 import { normalizeEmail } from './email.ts';
-import { mailerFromEnv, newTaskMessage, type Mailer } from './mailer.ts';
+import { createMailer, mailerFromConfig, newTaskMessage, type Mailer } from './mailer.ts';
+import { ensureSettingsTable, getSetting, setSetting, resolveSmtpConfig, saveSmtpSettings, publicSmtpSettings } from './settings.ts';
+import { autoCompleteAtFull } from './autocomplete.ts';
 import { createOverdueChecker } from './overdue.ts';
 
 interface Activity {
@@ -71,7 +73,9 @@ const __dirname = path.dirname(__filename);
 // overridden to a mounted volume (see Dockerfile/DB_PATH) so the database
 // survives container restarts and image rebuilds.
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../kanban.db');
-const mailer: Mailer = mailerFromEnv();
+// Built from the settings table (falling back to SMTP_* env vars) once the DB is open, and
+// rebuilt whenever an admin saves new mail settings.
+let mailer: Mailer = createMailer(null, '');
 
 let db: Database;
 
@@ -160,6 +164,20 @@ async function initSQLite() {
     await db.exec("ALTER TABLE activities ADD COLUMN overdueNotifiedAt TEXT;");
   } catch {
     // Column might already exist
+  }
+
+  await ensureSettingsTable(db);
+  mailer = mailerFromConfig(await resolveSmtpConfig(db));
+
+  // One-time: tasks already at 100% progress but still in todo/doing go to "done"
+  // (the same rule activity:update now applies when progress reaches 100).
+  if (!(await getSetting(db, 'sweep_100_done'))) {
+    const now = new Date().toISOString();
+    await db.run(
+      "UPDATE activities SET status = 'done', completedAt = COALESCE(completedAt, ?), archived = 0 WHERE progress >= 100 AND status IN ('todo', 'doing')",
+      [now]
+    );
+    await setSetting(db, 'sweep_100_done', now);
   }
 
   await seedDatabaseIfEmpty();
@@ -344,7 +362,15 @@ io.on('connection', async (socket) => {
   });
 
   socket.on('activity:update', async (updatedAct: Activity) => {
-    const progress = updatedAct.status === 'done' ? 100 : updatedAct.status === 'doing' ? (typeof updatedAct.progress === 'number' ? updatedAct.progress : 50) : (typeof updatedAct.progress === 'number' ? updatedAct.progress : 0);
+    const rawProgress = updatedAct.status === 'done' ? 100 : updatedAct.status === 'doing' ? (typeof updatedAct.progress === 'number' ? updatedAct.progress : 50) : (typeof updatedAct.progress === 'number' ? updatedAct.progress : 0);
+    // Raising progress to 100 moves the task to "done" by itself.
+    const prev = await db.get<{ progress: number | null }>('SELECT progress FROM activities WHERE id = ?', [updatedAct.id]);
+    const next = autoCompleteAtFull(
+      { progress: prev?.progress ?? null },
+      { status: updatedAct.status, progress: rawProgress, completedAt: updatedAct.completedAt || null },
+      new Date().toISOString()
+    );
+    const progress = next.progress;
     await db.run(
       `UPDATE activities SET title = ?, description = ?, startDate = ?, endDate = ?, status = ?, username = ?, assignedBy = ?, priority = ?, progress = ?, teamId = ?, completedAt = ?,
          overdueNotifiedAt = CASE WHEN endDate != ? OR (status IN ('done','cancelled') AND ? NOT IN ('done','cancelled')) THEN NULL ELSE overdueNotifiedAt END
@@ -354,15 +380,15 @@ io.on('connection', async (socket) => {
         updatedAct.description,
         updatedAct.startDate,
         updatedAct.endDate,
-        updatedAct.status,
+        next.status,
         updatedAct.username,
         updatedAct.assignedBy || null,
         updatedAct.priority,
         progress,
         updatedAct.teamId || null,
-        updatedAct.completedAt || null,
+        next.completedAt,
         updatedAct.endDate,
-        updatedAct.status,
+        next.status,
         updatedAct.id,
       ]
     );
@@ -508,6 +534,54 @@ io.on('connection', async (socket) => {
     await broadcastTeams();
   });
 
+  // Mail settings. Reading is open (the password never leaves the server); changing or
+  // testing them needs an admin's password, checked like auth:changePassword.
+  const checkAdmin = async (username: unknown, password: unknown) => {
+    const row = await db.get<{ username: string; role: string | null; passwordHash: string | null }>(
+      'SELECT username, role, passwordHash FROM users WHERE username = ? COLLATE NOCASE',
+      [typeof username === 'string' ? username : '']
+    );
+    if (!row || !isAdminRow(row) || !row.passwordHash) return null;
+    return (await verifyPassword(typeof password === 'string' ? password : '', row.passwordHash)) ? row : null;
+  };
+
+  socket.on('settings:getMail', async (_payload: unknown, ack?: (res: object) => void) => {
+    (ack ?? (() => {}))({ ok: true, settings: await publicSmtpSettings(db), enabled: mailer.enabled });
+  });
+
+  socket.on('settings:saveMail', async (
+    payload: { adminUsername?: string; adminPassword?: string; host?: string; port?: number | string; user?: string; pass?: string; from?: string },
+    ack?: (res: object) => void
+  ) => {
+    const reply = ack ?? (() => {});
+    if (!(await checkAdmin(payload?.adminUsername, payload?.adminPassword))) return reply(await failAuth('bad_password'));
+    failedAuthAttempts = 0;
+    const port = payload.port === undefined || payload.port === '' ? undefined : Number(payload.port);
+    if (port !== undefined && (!Number.isInteger(port) || port < 1 || port > 65535)) return reply({ ok: false, error: 'invalid_port' });
+    await saveSmtpSettings(db, { host: payload.host, port, user: payload.user, pass: payload.pass, from: payload.from });
+    mailer = mailerFromConfig(await resolveSmtpConfig(db));
+    reply({ ok: true, enabled: mailer.enabled, settings: await publicSmtpSettings(db) });
+  });
+
+  socket.on('settings:testMail', async (
+    payload: { adminUsername?: string; adminPassword?: string },
+    ack?: (res: object) => void
+  ) => {
+    const reply = ack ?? (() => {});
+    const admin = await checkAdmin(payload?.adminUsername, payload?.adminPassword);
+    if (!admin) return reply(await failAuth('bad_password'));
+    failedAuthAttempts = 0;
+    if (!mailer.enabled) return reply({ ok: false, error: 'not_configured' });
+    const row = await db.get<{ email: string | null }>('SELECT email FROM users WHERE username = ?', [admin.username]);
+    if (!row?.email) return reply({ ok: false, error: 'no_email' });
+    const result = await mailer.trySend(
+      row.email,
+      'Prueba de KanbanFlow',
+      'Si recibes este correo, la configuración de avisos de KanbanFlow funciona correctamente.'
+    );
+    reply({ ok: result.ok, error: result.ok ? undefined : 'send_failed', message: result.error, to: row.email });
+  });
+
   // Team handlers
   socket.on('team:create', async ({ name, memberUsernames }: { name: string; memberUsernames: string[] }) => {
     const id = 'team_' + Math.random().toString(36).substring(2, 11);
@@ -554,7 +628,7 @@ setInterval(async () => {
 let runOverdueOnce: (() => Promise<number>) | null = null;
 async function checkOverdue() {
   try {
-    runOverdueOnce ??= createOverdueChecker(db, mailer);
+    runOverdueOnce ??= createOverdueChecker(db, () => mailer);
     const n = await runOverdueOnce();
     if (n > 0) console.log(`[Kanban Server] ${n} aviso(s) de tarea retrasada enviado(s)`);
   } catch (err) {

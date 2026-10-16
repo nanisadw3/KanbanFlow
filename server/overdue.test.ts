@@ -92,3 +92,15 @@ test('pasadas solapadas no duplican el aviso (guard en vuelo)', async () => {
   assert.equal(await first, 1);
   assert.equal(sent.length, 1);
 });
+
+test('el revisor usa el mailer vigente en cada pasada (config cambiada desde el panel)', async () => {
+  const db = await makeDb();
+  await addAct(db, '1', '2026-10-01', 'todo');
+  let current = createMailer(null, '');
+  const check = createOverdueChecker(db, () => current, () => '2026-10-16');
+  assert.equal(await check(), 0);
+  const { sent, mailer } = okMailer();
+  current = mailer;
+  assert.equal(await check(), 1);
+  assert.equal(sent.length, 1);
+});

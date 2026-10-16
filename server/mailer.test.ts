@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createMailer, mailerFromEnv, newTaskMessage, overdueMessage } from './mailer.ts';
+import { createMailer, mailerFromEnv, mailerFromConfig, newTaskMessage, overdueMessage } from './mailer.ts';
 
 const task = { title: 'Entregar reporte', description: 'Reporte mensual', endDate: '2026-10-20', priority: 'alta' };
 
@@ -35,4 +35,18 @@ test('plantillas incluyen título, fecha y quién asignó', () => {
   const o = overdueMessage(task);
   assert.match(o.subject, /retrasad/i);
   assert.match(o.text, /Entregar reporte/);
+});
+
+test('trySend devuelve el motivo del fallo', async () => {
+  const bad = createMailer({ sendMail: async () => { throw new Error('535 bad credentials'); } }, 'k@x.com');
+  assert.deepEqual(await bad.trySend('a@x.com', 's', 't'), { ok: false, error: '535 bad credentials' });
+  const good = createMailer({ sendMail: async () => {} }, 'k@x.com');
+  assert.deepEqual(await good.trySend('a@x.com', 's', 't'), { ok: true });
+  assert.equal((await createMailer(null, '').trySend('a@x.com', 's', 't')).ok, false);
+});
+
+test('mailerFromConfig exige host, usuario y contraseña', () => {
+  assert.equal(mailerFromConfig({ host: 'smtp.x.com', user: 'u', pass: 'p' }).enabled, true);
+  assert.equal(mailerFromConfig({ host: 'smtp.x.com', user: 'u' }).enabled, false);
+  assert.equal(mailerFromConfig({}).enabled, false);
 });
