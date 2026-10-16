@@ -2,10 +2,17 @@ import { useEffect, useState } from 'react';
 import { initDB, subscribeActivities, subscribeUsers } from './db';
 import type { Activity } from './db';
 import './App.css';
+import { todayString, countOpenAndOverdue, overdueRate } from './dates';
 
 function StatsPage({ onBack }: { onBack: () => void }) {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [usersList, setUsersList] = useState<{ username: string; fullName?: string }[]>([]);
+  // Refreshed every minute so "overdue" updates while the page stays open.
+  const [today, setToday] = useState(todayString);
+  useEffect(() => {
+    const t = setInterval(() => setToday(todayString()), 60_000);
+    return () => clearInterval(t);
+  }, []);
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     return (localStorage.getItem('theme') as 'dark' | 'light') || 'dark';
   });
@@ -46,7 +53,10 @@ function StatsPage({ onBack }: { onBack: () => void }) {
       const doingRate = total === 0 ? 0 : Math.round((doing / total) * 100);
       const rate = total === 0 ? 0 : Math.round((done / total) * 100);
       const cancelRate = total === 0 ? 0 : Math.round((cancelled / total) * 100);
-      return { username, displayName, todo, doing, done, cancelled, total, rate, todoRate, doingRate, cancelRate };
+      const openAndOverdue = countOpenAndOverdue(acts, today);
+      const overdue = openAndOverdue.overdue;
+      const overdueShare = overdueRate(openAndOverdue);
+      return { username, displayName, todo, doing, done, cancelled, total, rate, todoRate, doingRate, cancelRate, overdue, overdueShare };
     })
     .sort((a, b) => b.rate - a.rate || b.total - a.total);
 
@@ -55,6 +65,9 @@ function StatsPage({ onBack }: { onBack: () => void }) {
   const totalDoing = personalActivities.filter(a => a.status === 'doing').length;
   const totalDone = personalActivities.filter(a => a.status === 'done').length;
   const totalCancelled = personalActivities.filter(a => a.status === 'cancelled').length;
+
+  const overall = countOpenAndOverdue(personalActivities, today);
+  const overallOverdueShare = overdueRate(overall);
 
   const overallTodoRate = totalAll === 0 ? 0 : Math.round((totalTodo / totalAll) * 100);
   const overallDoingRate = totalAll === 0 ? 0 : Math.round((totalDoing / totalAll) * 100);
@@ -87,7 +100,7 @@ function StatsPage({ onBack }: { onBack: () => void }) {
         </button>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1.5rem', marginBottom: '1.5rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
         <div className="glass-panel stats-hero" style={{ margin: '0', borderLeft: '4px solid var(--color-todo)' }}>
           <span className="stats-hero-value" style={{ color: 'var(--color-todo)' }}>{overallTodoRate}%</span>
           <span className="stats-hero-label">Tasa de Por Realizar</span>
@@ -103,6 +116,12 @@ function StatsPage({ onBack }: { onBack: () => void }) {
         <div className="glass-panel stats-hero" style={{ margin: '0', borderLeft: '4px solid var(--color-danger)' }}>
           <span className="stats-hero-value" style={{ color: 'var(--color-danger)' }}>{overallCancelRate}%</span>
           <span className="stats-hero-label">Tasa de Cancelación</span>
+        </div>
+        <div className="glass-panel stats-hero" style={{ margin: '0', borderLeft: '4px solid var(--color-danger)' }}>
+          <span className="stats-hero-value" style={{ color: 'var(--color-danger)' }}>
+            {overall.overdue} <span style={{ fontSize: '1.1rem', fontWeight: 600 }}>({overallOverdueShare}%)</span>
+          </span>
+          <span className="stats-hero-label">Retrasadas · % de las abiertas</span>
         </div>
       </div>
 
@@ -133,9 +152,16 @@ function StatsPage({ onBack }: { onBack: () => void }) {
 
           <div className="stats-rows">
             {rows.map(r => (
-              <div className="glass-panel stats-row" key={r.username}>
+              <div className={`glass-panel stats-row ${r.overdue > 0 ? 'has-overdue' : ''}`} key={r.username}>
                 <div className="stats-row-head">
-                  <span className="stats-row-name">{r.displayName} <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 'normal' }}>({r.username})</span></span>
+                  <span className="stats-row-name">{r.displayName} <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 'normal' }}>({r.username})</span>
+                    {r.overdue > 0 && (
+                      <span className="overdue-user-badge" style={{ display: 'flex', width: 'fit-content', marginLeft: 0, marginTop: '0.25rem' }} title="Tareas abiertas con la fecha de fin vencida">
+                        <span className="material-symbols-rounded" style={{ fontSize: '14px' }}>alarm</span>
+                        {r.overdue} {r.overdue === 1 ? 'retrasada' : 'retrasadas'} · {r.overdueShare}% de las abiertas
+                      </span>
+                    )}
+                  </span>
                   <span className="stats-row-rate" style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'center' }}>
                     <span style={{ color: 'var(--color-todo)', fontWeight: '600' }}>{r.todoRate}% por realizar</span>
                     <span style={{ color: 'var(--text-muted)' }}>•</span>
@@ -185,6 +211,7 @@ function StatsPage({ onBack }: { onBack: () => void }) {
                   <span>En Proceso: {r.doing}</span>
                   <span>Completadas: {r.done}</span>
                   <span>Canceladas: {r.cancelled}</span>
+                  <span style={r.overdue > 0 ? { color: 'var(--color-danger)', fontWeight: 700 } : undefined}>Retrasadas: {r.overdue}</span>
                   <span>Total: {r.total}</span>
                 </div>
               </div>

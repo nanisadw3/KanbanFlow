@@ -30,16 +30,11 @@ import {
 import type { Activity, User, Team, PresenceEntry } from './db';
 // Using Material Symbols Rounded via Google Fonts, no Lucide React imports needed
 import './App.css';
+import { todayString, isOverdue as isOverdueOn, overdueLabel } from './dates';
 import StatsPage from './StatsPage';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const isEmailValid = (v: string) => EMAIL_RE.test(v.trim());
-
-const todayString = () => {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-};
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -72,6 +67,7 @@ function App() {
   const [progress, setProgress] = useState<number>(50);
   const [targetAssignee, setTargetAssignee] = useState<string>('');  // Admin filter
   const [viewingUserAsAdmin, setViewingUserAsAdmin] = useState<User | null>(null);
+  const [overdueOnly, setOverdueOnly] = useState(false); // admin: also require "overdue"
   const [activeStatusFilters, setActiveStatusFilters] = useState<Set<'todo' | 'doing' | 'done' | 'cancelled'>>(new Set());
   const [activeUserFilters, setActiveUserFilters] = useState<Set<string>>(new Set());
   const [isUsersPanelOpen, setIsUsersPanelOpen] = useState(false);
@@ -120,8 +116,7 @@ function App() {
 
   // "Today" as YYYY-MM-DD, refreshed every minute so overdue tasks turn red without a reload.
   const [today, setToday] = useState(todayString);
-  const isOverdue = (a: Activity) =>
-    !!a.endDate && a.endDate < today && a.status !== 'done' && a.status !== 'cancelled';
+  const isOverdue = (a: Activity) => isOverdueOn(a, today);
 
   // History of completed tasks
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
@@ -927,9 +922,11 @@ function App() {
     const matchesUserFilter = activeUserFilters.size === 0 || activeUserFilters.has(username.toLowerCase());
     if (!matchesUserFilter) return false;
 
-    if (activeStatusFilters.size > 0) {
+    if (activeStatusFilters.size > 0 || overdueOnly) {
       const userActs = activities.filter(a => a.username.toLowerCase() === username.toLowerCase() && !a.teamId);
-      const hasMatchingActivity = userActs.some(a => activeStatusFilters.has(a.status));
+      const hasMatchingActivity = userActs.some(a =>
+        (activeStatusFilters.size === 0 || activeStatusFilters.has(a.status)) && (!overdueOnly || isOverdue(a))
+      );
       if (!hasMatchingActivity) return false;
     }
 
@@ -1126,6 +1123,33 @@ function App() {
                 </button>
               );
             })}
+
+            {(() => {
+              const overdueCount = activities.filter(a => !a.teamId && isOverdue(a)).length;
+              return (
+                <button
+                  type="button"
+                  className={`glass-panel stat-card stat-card-filter stat-card-overdue ${overdueOnly ? 'is-active' : ''} ${overdueCount > 0 ? 'has-overdue' : ''} ${!overdueOnly && (activeStatusFilters.size > 0 || activeUserFilters.size > 0) ? 'is-dimmed' : ''}`}
+                  style={{ ['--filter-color' as string]: 'var(--color-danger)', ['--filter-color-rgb' as string]: 'var(--color-danger-rgb)' }}
+                  onClick={() => setOverdueOnly(o => !o)}
+                  aria-pressed={overdueOnly}
+                  title="Filtrar por: Retrasadas"
+                >
+                  {overdueOnly && (
+                    <span className="stat-filter-check">
+                      <span className="material-symbols-rounded">check</span>
+                    </span>
+                  )}
+                  <div className="stat-icon-box stat-icon-overdue">
+                    <span className="material-symbols-rounded" style={{ fontSize: '24px' }}>alarm</span>
+                  </div>
+                  <div className="stat-info">
+                    <span className="stat-value">{overdueCount}</span>
+                    <span className="stat-label">Retrasadas</span>
+                  </div>
+                </button>
+              );
+            })()}
           </div>
 
           {isUsersPanelOpen && (() => {
@@ -1192,18 +1216,19 @@ function App() {
             );
           })()}
 
-          {(activeStatusFilters.size > 0 || activeUserFilters.size > 0) && (
+          {(activeStatusFilters.size > 0 || activeUserFilters.size > 0 || overdueOnly) && (
             <div className="filter-hint animate-fade-in">
               <span className="material-symbols-rounded" style={{ fontSize: '16px' }}>filter_alt</span>
               Mostrando solo:{' '}
               {[
                 ...[...activeStatusFilters].map(s => s === 'todo' ? 'Por Realizar' : s === 'doing' ? 'En Proceso' : s === 'done' ? 'Completadas' : 'Canceladas'),
+                ...(overdueOnly ? ['Retrasadas'] : []),
                 ...[...activeUserFilters].map(key => {
                   const found = users.find(u => u.username.toLowerCase() === key);
                   return found ? (found.fullName || found.username) : key;
                 }),
               ].join(', ')}
-              <button type="button" onClick={() => { setActiveStatusFilters(new Set()); setActiveUserFilters(new Set()); }}>Limpiar filtro</button>
+              <button type="button" onClick={() => { setActiveStatusFilters(new Set()); setActiveUserFilters(new Set()); setOverdueOnly(false); }}>Limpiar filtro</button>
             </div>
           )}
 
@@ -1282,8 +1307,12 @@ function App() {
             </div>
 
             {/* Detailed row-by-row view of user activities */}
-            {users.filter(u => u.username.toLowerCase() !== 'admin' && isUserShown(u.username)).map(u => {
-              const userActs = activities.filter(a => a.username.toLowerCase() === u.username.toLowerCase() && !a.teamId);
+            {users
+              .filter(u => u.username.toLowerCase() !== 'admin' && isUserShown(u.username))
+              .map(u => ({ u, overdueTotal: activities.filter(a => a.username.toLowerCase() === u.username.toLowerCase() && !a.teamId && isOverdue(a)).length }))
+              .sort((a, b) => b.overdueTotal - a.overdueTotal) // people with late tasks first (stable otherwise)
+              .map(({ u, overdueTotal }) => {
+              const userActs = activities.filter(a => a.username.toLowerCase() === u.username.toLowerCase() && !a.teamId && (!overdueOnly || isOverdue(a)));
               const userIsOnline = onlineNow.some(p => p.username.toLowerCase() === u.username.toLowerCase());
               const displayName = u.fullName || u.username;
               return (
@@ -1298,7 +1327,15 @@ function App() {
                     <div className="admin-user-head">
                       {userIsOnline && <span className="online-now-dot" title="En línea ahora" />}
                       <div className="admin-user-names">
-                        <span className="admin-username">{displayName}</span>
+                        <span className="admin-username">
+                          {displayName}
+                          {overdueTotal > 0 && (
+                            <span className="overdue-user-badge" title={`${overdueTotal} ${overdueTotal === 1 ? 'tarea retrasada' : 'tareas retrasadas'}`}>
+                              <span className="material-symbols-rounded" style={{ fontSize: '14px' }}>alarm</span>
+                              {overdueTotal} {overdueTotal === 1 ? 'retrasada' : 'retrasadas'}
+                            </span>
+                          )}
+                        </span>
                         <span className="admin-user-handle">@{u.username}</span>
                       </div>
                       <button
@@ -1352,7 +1389,15 @@ function App() {
                             {a.assignedBy && (
                               <div className="admin-mini-card-by">★ Por: {a.assignedBy}</div>
                             )}
-                            <div className="admin-mini-card-dates">{a.startDate} / {a.endDate}</div>
+                            <div className="admin-mini-card-dates">
+                              {a.startDate} / <span className={isOverdue(a) ? 'overdue-date' : undefined}>{a.endDate}</span>
+                            </div>
+                            {isOverdue(a) && (
+                              <div className="overdue-mini-note">
+                                <span className="material-symbols-rounded" style={{ fontSize: '13px' }}>alarm</span>
+                                Retrasada · {overdueLabel(a.endDate, today)}
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -1383,7 +1428,15 @@ function App() {
                             {a.assignedBy && (
                               <div className="admin-mini-card-by">★ Por: {a.assignedBy}</div>
                             )}
-                            <div className="admin-mini-card-dates">{a.startDate} / {a.endDate}</div>
+                            <div className="admin-mini-card-dates">
+                              {a.startDate} / <span className={isOverdue(a) ? 'overdue-date' : undefined}>{a.endDate}</span>
+                            </div>
+                            {isOverdue(a) && (
+                              <div className="overdue-mini-note">
+                                <span className="material-symbols-rounded" style={{ fontSize: '13px' }}>alarm</span>
+                                Retrasada · {overdueLabel(a.endDate, today)}
+                              </div>
+                            )}
                           </div>
                         );
                       })}

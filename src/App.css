@@ -478,6 +478,62 @@ body.dark-theme .btn-primary {
   background-image: linear-gradient(rgba(var(--color-danger-rgb), 0.12), rgba(var(--color-danger-rgb), 0.12));
 }
 
+.admin-mini-card.overdue {
+  border-left-width: 4px;
+  background-color: rgba(var(--color-danger-rgb), 0.06);
+}
+
+.overdue-date {
+  color: var(--color-danger);
+  font-weight: 700;
+}
+
+.overdue-mini-note {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-top: 0.3rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--color-danger);
+}
+
+.overdue-user-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  margin-left: 0.6rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  vertical-align: middle;
+  color: var(--color-danger);
+  background: rgba(var(--color-danger-rgb), 0.14);
+  border: 1px solid rgba(var(--color-danger-rgb), 0.45);
+}
+
+.stat-icon-overdue {
+  background: rgba(var(--color-danger-rgb), 0.18);
+  color: var(--color-danger);
+}
+
+/* Gentle pulse on the "Retrasadas" card while something is overdue */
+.stat-card-overdue.has-overdue .stat-icon-box {
+  animation: overdue-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes overdue-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(var(--color-danger-rgb), 0.45); }
+  50% { box-shadow: 0 0 0 8px rgba(var(--color-danger-rgb), 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stat-card-overdue.has-overdue .stat-icon-box {
+    animation: none;
+  }
+}
+
 .overdue-badge {
   flex-shrink: 0;
   padding: 0.1rem 0.45rem;
@@ -588,9 +644,15 @@ body.dark-theme .btn-primary {
 
 .admin-stats-grid {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 1.5rem;
   margin-bottom: 2.5rem;
+}
+
+@media (max-width: 1400px) {
+  .admin-stats-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
 }
 
 @media (max-width: 900px) {
@@ -1795,4 +1857,8 @@ body.dark-theme .prio-baja {
 .history-row-owner {
   font-weight: 600;
   color: var(--color-primary);
+}
+/* Productivity page: a row with overdue tasks gets a solid red edge */
+.stats-row.has-overdue {
+  border-left: 4px solid var(--color-danger);
 }
