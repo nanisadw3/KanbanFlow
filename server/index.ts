@@ -9,7 +9,7 @@ import { existsSync, mkdirSync } from 'fs';
 import { scrypt as scryptCb, randomBytes, timingSafeEqual } from 'crypto';
 import { normalizeEmail } from './email.ts';
 import { mailerFromEnv, newTaskMessage, type Mailer } from './mailer.ts';
-import { localToday, runOverdueCheck } from './overdue.ts';
+import { createOverdueChecker } from './overdue.ts';
 
 interface Activity {
   id: string;
@@ -551,9 +551,11 @@ setInterval(async () => {
   }
 }, 60000);
 
+let runOverdueOnce: (() => Promise<number>) | null = null;
 async function checkOverdue() {
   try {
-    const n = await runOverdueCheck(db, mailer, localToday());
+    runOverdueOnce ??= createOverdueChecker(db, mailer);
+    const n = await runOverdueOnce();
     if (n > 0) console.log(`[Kanban Server] ${n} aviso(s) de tarea retrasada enviado(s)`);
   } catch (err) {
     console.error('[Kanban Server] Falló la revisión de tareas retrasadas:', err);

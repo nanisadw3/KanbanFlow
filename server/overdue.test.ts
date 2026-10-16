@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import sqlite3 from 'sqlite3';
 import { open, type Database } from 'sqlite';
-import { localToday, runOverdueCheck } from './overdue.ts';
+import { localToday, runOverdueCheck, createOverdueChecker } from './overdue.ts';
 import { createMailer } from './mailer.ts';
 
 async function makeDb(): Promise<Database> {
@@ -75,4 +75,20 @@ test('mailer deshabilitado no marca nada', async () => {
   await addAct(db, '1', '2026-10-01', 'todo');
   assert.equal(await runOverdueCheck(db, createMailer(null, ''), '2026-10-16'), 0);
   assert.equal(await stamp(db, '1'), null);
+});
+
+test('pasadas solapadas no duplican el aviso (guard en vuelo)', async () => {
+  const db = await makeDb();
+  await addAct(db, '1', '2026-10-01', 'todo');
+  const sent: any[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>(r => { release = r; });
+  const slow = createMailer({ sendMail: async o => { await gate; sent.push(o); } }, 'k@x.com');
+  const check = createOverdueChecker(db, slow, () => '2026-10-16');
+  const first = check();
+  const second = await check(); // arranca mientras la primera sigue enviando
+  assert.equal(second, 0);
+  release();
+  assert.equal(await first, 1);
+  assert.equal(sent.length, 1);
 });

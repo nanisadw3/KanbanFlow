@@ -747,6 +747,14 @@ function App() {
     setEmailDialogError('');
   };
 
+  // Reset the field too: otherwise closing an admin's editor for user X leaves X's address
+  // pre-filled in the blocking "register your own email" dialog.
+  const closeEmailEditor = () => {
+    setEmailEditTarget(null);
+    setEmailDialogValue('');
+    setEmailDialogError('');
+  };
+
   const openEmailEditor = (u: User, e: React.MouseEvent) => {
     e.stopPropagation();
     setEmailDialogValue(u.email || '');
@@ -1975,7 +1983,7 @@ function App() {
 
       {/* Email dialog: blocking for a user with no email, dismissible when an admin edits someone's */}
       {emailDialogTarget && (
-        <div className="modal-overlay" onClick={() => { if (emailEditTarget) setEmailEditTarget(null); }}>
+        <div className="modal-overlay" onClick={() => { if (emailEditTarget) closeEmailEditor(); }}>
           <div className="glass-panel modal-content animate-scale-in" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '450px' }}>
             <div className="modal-header">
               <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -1983,7 +1991,7 @@ function App() {
                 {emailEditTarget ? `Correo de ${emailEditTarget}` : 'Registra tu correo electrónico'}
               </h3>
               {emailEditTarget && (
-                <button type="button" className="modal-close" onClick={() => setEmailEditTarget(null)} aria-label="Cerrar">
+                <button type="button" className="modal-close" onClick={closeEmailEditor} aria-label="Cerrar">
                   <span className="material-symbols-rounded">close</span>
                 </button>
               )}

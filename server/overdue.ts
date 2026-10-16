@@ -39,3 +39,18 @@ export async function runOverdueCheck(db: Database, mailer: Mailer, today: strin
   }
   return sent;
 }
+
+// A pass can outlast the 5-minute interval (slow SMTP, many tasks); without a guard the
+// next tick would pick up rows the first pass hasn't stamped yet and send them twice.
+export function createOverdueChecker(db: Database, mailer: Mailer, getToday: () => string = localToday) {
+  let running = false;
+  return async (): Promise<number> => {
+    if (running) return 0;
+    running = true;
+    try {
+      return await runOverdueCheck(db, mailer, getToday());
+    } finally {
+      running = false;
+    }
+  };
+}
