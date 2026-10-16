@@ -58,6 +58,11 @@ export function mailerFromConfig(cfg: SmtpConfig): Mailer {
     port,
     secure: port === 465,
     auth: { user, pass },
+    // Fail fast with a real reason (nodemailer's defaults wait 2 min to connect) so the
+    // admin panel's "test" button reports it instead of timing out.
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 20_000,
   });
   return createMailer(transport, cfg.from || `KanbanFlow <${user}>`);
 }
