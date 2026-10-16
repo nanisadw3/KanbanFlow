@@ -45,3 +45,97 @@ test('donutArcs reparte fracciones que suman 1 en orden hecho, en curso, por hac
 test('donutArcs sin tareas devuelve lista vacía', () => {
   assert.deepEqual(donutArcs({ todo: 0, doing: 0, done: 0, cancelled: 0 }), []);
 });
+
+// ───────── Periodo, alcance, cumplimiento, tendencia y antigüedad ─────────
+import { periodStart, inPeriod, closeStats, weeklyTrend, agingBuckets, matchesDrill, inScope } from '../src/stats.ts';
+
+const iso = (y: number, m: number, d: number, h = 12) => new Date(y, m - 1, d, h).toISOString();
+
+test('periodStart: ventana en días o null para "todo"', () => {
+  const now = new Date(2026, 9, 16, 12);
+  assert.equal(periodStart('all', now), null);
+  assert.equal(periodStart('7d', now), now.getTime() - 7 * 86400000);
+  assert.equal(periodStart('90d', now), now.getTime() - 90 * 86400000);
+});
+
+test('inPeriod: las abiertas siempre cuentan; hechas por fecha de cierre; canceladas por creación', () => {
+  const start = new Date(2026, 9, 1).getTime();
+  assert.equal(inPeriod(t('todo', '2026-01-01', { createdAt: iso(2026, 1, 1) }), start), true);
+  assert.equal(inPeriod(t('doing', '2026-01-01', { createdAt: iso(2026, 1, 1) }), start), true);
+  assert.equal(inPeriod(t('done', '2026-10-05', { completedAt: iso(2026, 10, 5), createdAt: iso(2026, 1, 1) }), start), true);
+  assert.equal(inPeriod(t('done', '2026-08-05', { completedAt: iso(2026, 8, 5), createdAt: iso(2026, 8, 1) }), start), false);
+  assert.equal(inPeriod(t('done', '2026-10-05', { createdAt: iso(2026, 10, 2) }), start), true);   // sin completedAt: usa createdAt
+  assert.equal(inPeriod(t('cancelled', '2026-08-05', { createdAt: iso(2026, 8, 1) }), start), false);
+  assert.equal(inPeriod(t('done', '2020-01-01', { completedAt: iso(2020, 1, 1) }), null), true);   // todo el historial
+});
+
+test('inScope: personales, equipos o todo', () => {
+  assert.equal(inScope(t('todo', '2026-10-01', { teamId: null }), 'personal'), true);
+  assert.equal(inScope(t('todo', '2026-10-01', { teamId: 'team_1' }), 'personal'), false);
+  assert.equal(inScope(t('todo', '2026-10-01', { teamId: 'team_1' }), 'teams'), true);
+  assert.equal(inScope(t('todo', '2026-10-01', { teamId: undefined }), 'teams'), false);
+  assert.equal(inScope(t('todo', '2026-10-01', { teamId: 'team_1' }), 'all'), true);
+});
+
+test('closeStats: a tiempo y días medios de cierre solo con tareas que tienen completedAt', () => {
+  const tasks = [
+    t('done', '2026-10-10', { createdAt: iso(2026, 10, 1), completedAt: iso(2026, 10, 9) }),   // a tiempo, 8 días
+    t('done', '2026-10-10', { createdAt: iso(2026, 10, 1), completedAt: iso(2026, 10, 11) }),  // tarde, 10 días
+    t('done', '2026-10-10', { createdAt: iso(2026, 10, 1), completedAt: iso(2026, 10, 10, 23) }), // el mismo día de fin: a tiempo, ~9 días
+    t('done', '2026-10-10', {}),                                                              // sin fecha: no cuenta
+    t('doing', '2026-10-10', {}),
+  ];
+  const c = closeStats(tasks);
+  assert.equal(c.doneTotal, 4);
+  assert.equal(c.withDate, 3);
+  assert.equal(c.onTime, 2);
+  assert.equal(c.onTimeRate, 67);
+  assert.equal(Math.round((c.avgCloseDays ?? 0) * 10) / 10, 9.2); // (8 + 10 + 9,46) / 3
+});
+
+test('closeStats sin datos: tasa y promedio nulos', () => {
+  assert.deepEqual(closeStats([]), { doneTotal: 0, withDate: 0, onTime: 0, onTimeRate: null, avgCloseDays: null });
+});
+
+test('weeklyTrend: 8 semanas que empiezan en lunes, con creadas y completadas', () => {
+  const now = new Date(2026, 9, 16, 12);   // viernes 16 oct 2026 -> la semana actual empieza el lunes 12 oct
+  const tasks = [
+    t('done', '2026-10-20', { createdAt: iso(2026, 10, 13), completedAt: iso(2026, 10, 15) }), // semana actual: creada y completada
+    t('todo', '2026-10-30', { createdAt: iso(2026, 10, 5) }),                                    // semana del 5 oct: creada
+    t('done', '2026-09-01', { createdAt: iso(2026, 8, 10), completedAt: iso(2026, 8, 20) }),     // fuera de las 8 semanas (la primera empieza el 24 ago)
+  ];
+  const w = weeklyTrend(tasks, now, 8);
+  assert.equal(w.length, 8);
+  assert.equal(w[7].start, '2026-10-12');
+  assert.equal(w[0].start, '2026-08-24');
+  assert.deepEqual([w[7].created, w[7].completed], [1, 1]);
+  assert.deepEqual([w[6].created, w[6].completed], [1, 0]);
+  assert.equal(w.reduce((n, x) => n + x.created + x.completed, 0), 3);
+});
+
+test('agingBuckets reparte las retrasadas vivas por días de retraso', () => {
+  const today = '2026-10-16';
+  const tasks = [
+    t('todo', '2026-10-15'),                                  // 1 día
+    t('doing', '2026-10-13'),                                 // 3 días
+    t('todo', '2026-10-12'),                                  // 4 días
+    t('todo', '2026-10-09'),                                  // 7 días
+    t('doing', '2026-10-08'),                                 // 8 días
+    t('todo', '2026-09-01'),                                  // 45 días
+    t('todo', '2026-10-01', { archived: true }),              // archivada: no cuenta
+    t('done', '2026-10-01'),                                  // hecha: no cuenta
+    t('todo', '2026-10-16'),                                  // vence hoy: aún no
+  ];
+  assert.deepEqual(agingBuckets(tasks, today), { d1_3: 2, d4_7: 2, d8plus: 2, total: 6 });
+});
+
+test('matchesDrill filtra por estado, retrasadas o tramo de antigüedad', () => {
+  const today = '2026-10-16';
+  assert.equal(matchesDrill(t('done', '2026-10-01'), 'done', today), true);
+  assert.equal(matchesDrill(t('done', '2026-10-01'), 'doing', today), false);
+  assert.equal(matchesDrill(t('doing', '2026-10-01'), 'overdue', today), true);
+  assert.equal(matchesDrill(t('done', '2026-10-01'), 'overdue', today), false);
+  assert.equal(matchesDrill(t('todo', '2026-10-14'), 'aging:d1_3', today), true);
+  assert.equal(matchesDrill(t('todo', '2026-10-14'), 'aging:d4_7', today), false);
+  assert.equal(matchesDrill(t('todo', '2026-10-01'), 'aging:d8plus', today), true);
+});
