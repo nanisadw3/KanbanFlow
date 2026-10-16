@@ -30,7 +30,8 @@ import {
 import type { Activity, User, Team, PresenceEntry } from './db';
 // Using Material Symbols Rounded via Google Fonts, no Lucide React imports needed
 import './App.css';
-import { todayString, isOverdue as isOverdueOn, overdueLabel } from './dates';
+import { todayString, isOverdue as isOverdueOn } from './dates';
+import { Icon, IconButton, Avatar, Meta, MiniTaskCard } from './ui';
 import { isFilterActive, summarizeMatches, describeMatches } from './filters';
 import StatsPage from './StatsPage';
 
@@ -1015,52 +1016,32 @@ function App() {
 
         <div className="header-actions">
           {onlineNow.length > 0 && (
-            <div className="online-now" title={`En línea ahora: ${onlineNow.map(p => p.username).join(', ')}`}>
+            <div className="online-now" data-tip={`En línea: ${onlineNow.map(p => p.username).join(', ')}`}>
               <span className="online-now-dot" />
               <div className="online-now-avatars">
-                {onlineNow.slice(0, 4).map(p => (
-                  <span key={p.username} className="team-member-avatar" title={p.username}>{p.username.substring(0, 2).toUpperCase()}</span>
-                ))}
+                {onlineNow.slice(0, 4).map(p => <Avatar key={p.username} name={p.username} size={24} />)}
                 {onlineNow.length > 4 && <span className="team-member-avatar team-member-avatar-more">+{onlineNow.length - 4}</span>}
               </div>
             </div>
           )}
-          <button className="btn btn-secondary btn-icon-only" onClick={toggleTheme} title="Cambiar Tema">
-            <span className="material-symbols-rounded">{theme === 'dark' ? 'light_mode' : 'dark_mode'}</span>
-          </button>
+          <IconButton icon={theme === 'dark' ? 'light_mode' : 'dark_mode'} label="Cambiar tema" onClick={toggleTheme} />
           {(!isAdmin || viewingUserAsAdmin || viewingTeam) && (
-            <button className="btn btn-secondary" onClick={() => setIsHistoryModalOpen(true)} style={{ gap: '0.4rem', width: 'auto' }}>
-              <span className="material-symbols-rounded">history</span> Historial
-            </button>
+            <IconButton icon="history" label="Historial" onClick={() => setIsHistoryModalOpen(true)} />
           )}
           {(!isAdmin || viewingUserAsAdmin || viewingTeam) && (
-            <button className="btn btn-danger" onClick={handleClearBoard} style={{ gap: '0.4rem', width: 'auto' }}>
-              <span className="material-symbols-rounded">delete_sweep</span> Limpiar
-            </button>
+            <IconButton icon="delete_sweep" label="Limpiar tablero" variant="danger" onClick={handleClearBoard} />
           )}
-          {isAdmin && !viewingTeam ? (
+          {isAdmin && !viewingTeam && (
             <>
-              <button className="btn btn-secondary btn-icon-only" onClick={openPasswordModal} title="Cambiar mi contraseña">
-                <span className="material-symbols-rounded">key</span>
-              </button>
-              <button className="btn btn-secondary btn-icon-only" onClick={() => void openMailModal()} title="Correo de avisos">
-                <span className="material-symbols-rounded">forward_to_inbox</span>
-              </button>
-              <button className="btn btn-secondary" onClick={openCreateUserModal} style={{ gap: '0.4rem', width: 'auto', whiteSpace: 'nowrap' }}>
-                <span className="material-symbols-rounded">person_add</span> Nuevo Usuario
-              </button>
-              <button className="btn btn-primary" onClick={() => openCreateModal()} style={{ gap: '0.4rem', whiteSpace: 'nowrap' }}>
-                <span className="material-symbols-rounded">add</span> Asignar Nueva Tarea
-              </button>
+              <IconButton icon="key" label="Cambiar mi contraseña" onClick={openPasswordModal} />
+              <IconButton icon="forward_to_inbox" label="Correo de avisos" onClick={() => void openMailModal()} />
+              <IconButton icon="person_add" label="Nuevo usuario" onClick={openCreateUserModal} />
             </>
-          ) : (
-            <button className="btn btn-primary" onClick={() => openCreateModal()} style={{ gap: '0.4rem' }}>
-              <span className="material-symbols-rounded">add</span> {viewingTeam ? 'Nueva Tarea de Equipo' : 'Crear Actividad'}
-            </button>
           )}
-          <button className="btn btn-secondary btn-icon-only" onClick={handleLogout} title="Cerrar Sesión">
-            <span className="material-symbols-rounded">logout</span>
+          <button className="btn btn-primary" onClick={() => openCreateModal()} style={{ gap: '0.4rem', whiteSpace: 'nowrap' }}>
+            <span className="material-symbols-rounded">add</span> Nueva tarea
           </button>
+          <IconButton icon="logout" label="Cerrar sesión" onClick={handleLogout} />
         </div>
       </div>
 
@@ -1087,7 +1068,7 @@ function App() {
               aria-expanded={isUsersPanelOpen}
             >
               <div className="stat-icon-box stat-icon-users">
-                <span className="material-symbols-rounded" style={{ fontSize: '24px' }}>group</span>
+                <span className="material-symbols-rounded" style={{ fontSize: '26px' }}>group</span>
               </div>
               <div className="stat-info">
                 <span className="stat-value">{users.length - 1}</span>
@@ -1102,10 +1083,10 @@ function App() {
             </button>
 
             {([
-              { key: 'todo', icon: 'assignment', label: 'Por Realizar', varColor: '--color-todo', varRgb: '--color-todo-rgb' },
-              { key: 'doing', icon: 'schedule', label: 'En Proceso', varColor: '--color-doing', varRgb: '--color-doing-rgb' },
-              { key: 'done', icon: 'check_circle', label: 'Completadas', varColor: '--color-done', varRgb: '--color-done-rgb' },
-              { key: 'cancelled', icon: 'cancel', label: 'Canceladas', varColor: '--color-danger', varRgb: '--color-danger-rgb' },
+              { key: 'todo', icon: 'assignment', label: 'Por hacer', full: 'Por Realizar', varColor: '--color-todo', varRgb: '--color-todo-rgb' },
+              { key: 'doing', icon: 'schedule', label: 'En curso', full: 'En Proceso', varColor: '--color-doing', varRgb: '--color-doing-rgb' },
+              { key: 'done', icon: 'check_circle', label: 'Hechas', full: 'Completadas', varColor: '--color-done', varRgb: '--color-done-rgb' },
+              { key: 'cancelled', icon: 'cancel', label: 'Canceladas', full: 'Canceladas', varColor: '--color-danger', varRgb: '--color-danger-rgb' },
             ] as const).map(cfg => {
               const isActive = activeStatusFilters.has(cfg.key);
               const isDimmed = activeStatusFilters.size > 0 && !isActive;
@@ -1117,7 +1098,8 @@ function App() {
                   style={{ ['--filter-color' as string]: `var(${cfg.varColor})`, ['--filter-color-rgb' as string]: `var(${cfg.varRgb})` }}
                   onClick={() => toggleStatusFilter(cfg.key)}
                   aria-pressed={isActive}
-                  title={`Filtrar por: ${cfg.label}`}
+                  data-tip={`Filtrar por: ${cfg.full}`}
+                  aria-label={`Filtrar por: ${cfg.full}`}
                 >
                   {isActive && (
                     <span className="stat-filter-check">
@@ -1125,7 +1107,7 @@ function App() {
                     </span>
                   )}
                   <div className={`stat-icon-box stat-icon-${cfg.key}`}>
-                    <span className="material-symbols-rounded" style={{ fontSize: '24px' }}>{cfg.icon}</span>
+                    <span className="material-symbols-rounded" style={{ fontSize: '26px' }}>{cfg.icon}</span>
                   </div>
                   <div className="stat-info">
                     <span className="stat-value">{activities.filter(a => a.status === cfg.key && !a.teamId).length}</span>
@@ -1144,7 +1126,8 @@ function App() {
                   style={{ ['--filter-color' as string]: 'var(--color-danger)', ['--filter-color-rgb' as string]: 'var(--color-danger-rgb)' }}
                   onClick={() => setOverdueOnly(o => !o)}
                   aria-pressed={overdueOnly}
-                  title="Filtrar por: Retrasadas"
+                  data-tip="Filtrar por: Retrasadas"
+                  aria-label="Filtrar por: Retrasadas"
                 >
                   {overdueOnly && (
                     <span className="stat-filter-check">
@@ -1152,7 +1135,7 @@ function App() {
                     </span>
                   )}
                   <div className="stat-icon-box stat-icon-overdue">
-                    <span className="material-symbols-rounded" style={{ fontSize: '24px' }}>alarm</span>
+                    <span className="material-symbols-rounded" style={{ fontSize: '26px' }}>alarm</span>
                   </div>
                   <div className="stat-info">
                     <span className="stat-value">{overdueCount}</span>
@@ -1210,14 +1193,7 @@ function App() {
                           >
                             <span className="user-chip-name">{displayName}</span>
                           </button>
-                          <button
-                            type="button"
-                            className="user-chip-delete"
-                            onClick={(e) => handleDeleteUser(u.username, e)}
-                            title={`Eliminar a ${displayName}`}
-                          >
-                            <span className="material-symbols-rounded" style={{ fontSize: '12px' }}>close</span>
-                          </button>
+                          <IconButton icon="close" label={`Eliminar a ${displayName}`} variant="danger" size={22} className="user-chip-delete" onClick={(e) => handleDeleteUser(u.username, e)} />
                         </div>
                       );
                     })}
@@ -1263,8 +1239,8 @@ function App() {
                         {teams.length === 0 ? 'sin equipos' : `${matchingTeams.length} de ${teams.length} coinciden con el filtro`}
                       </span>
                     </div>
-                    <button type="button" className="btn btn-secondary" style={{ width: 'auto', gap: '0.3rem' }} onClick={() => setTeamsExpanded(true)}>
-                      <span className="material-symbols-rounded">expand_more</span> Mostrar todos
+                    <button type="button" className="btn btn-secondary" style={{ width: 'auto', gap: '0.3rem' }} data-tip="Mostrar todos los equipos" onClick={() => setTeamsExpanded(true)}>
+                      <Icon name="expand_more" size={18} /> Todos
                     </button>
                   </div>
                   {teams.length > 0 && (
@@ -1301,8 +1277,8 @@ function App() {
               </div>
               <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
                 {filterActive && (
-                  <button type="button" className="btn btn-secondary" style={{ width: 'auto', gap: '0.3rem' }} onClick={() => setTeamsExpanded(false)}>
-                    <span className="material-symbols-rounded">expand_less</span> Minimizar
+                  <button type="button" className="btn btn-secondary" style={{ width: 'auto', gap: '0.3rem' }} data-tip="Minimizar la lista de equipos" onClick={() => setTeamsExpanded(false)}>
+                    <Icon name="expand_less" size={18} /> Minimizar
                   </button>
                 )}
                 <button
@@ -1324,14 +1300,7 @@ function App() {
                   const teamTaskCount = activities.filter(a => a.teamId === t.id).length;
                   return (
                     <div key={t.id} className={`team-card ${filterActive ? (matches ? 'is-match' : 'is-dimmed') : ''}`} onClick={() => handleSelectTeam(t)} title="Clic para ver el tablero de este equipo">
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-icon-only delete-user-btn team-card-delete"
-                        onClick={(e) => handleDeleteTeam(t.id, t.name, e)}
-                        title="Eliminar equipo"
-                      >
-                        <span className="material-symbols-rounded" style={{ fontSize: '16px' }}>delete</span>
-                      </button>
+                      <IconButton icon="delete" label="Eliminar equipo" variant="danger" size={30} className="team-card-delete" onClick={(e) => handleDeleteTeam(t.id, t.name, e)} />
                       <div className="team-card-icon">
                         <span className="material-symbols-rounded">groups</span>
                       </div>
@@ -1396,46 +1365,41 @@ function App() {
                   style={{ cursor: 'pointer', transition: 'var(--transition-smooth)' }}
                 >
                   <div className="admin-user-info">
-                    <div className="admin-user-head">
-                      {userIsOnline && <span className="online-now-dot" title="En línea ahora" />}
-                      <div className="admin-user-names">
-                        <span className="admin-username">
-                          {displayName}
-                          {overdueTotal > 0 && (
-                            <span className="overdue-user-badge" title={`${overdueTotal} ${overdueTotal === 1 ? 'tarea retrasada' : 'tareas retrasadas'}`}>
-                              <span className="material-symbols-rounded" style={{ fontSize: '14px' }}>alarm</span>
-                              {overdueTotal} {overdueTotal === 1 ? 'retrasada' : 'retrasadas'}
+                    <div className="user-card">
+                      <Avatar name={displayName} size={44} online={userIsOnline} />
+                      <div className="user-card-body">
+                        <div className="user-card-top">
+                          <div className="user-card-names">
+                            <span className="admin-username">{displayName}</span>
+                            <span className="admin-user-handle">@{u.username}</span>
+                          </div>
+                          <div className="user-card-actions">
+                            <IconButton icon="mail" label="Editar correo" variant="tonal" size={32} onClick={(e) => openEmailEditor(u, e)} />
+                            <IconButton icon="delete" label="Eliminar usuario" variant="danger" size={32} onClick={(e) => handleDeleteUser(u.username, e)} />
+                          </div>
+                        </div>
+                        <div className="user-card-chips">
+                          <Meta icon="schedule" tip={`Última sesión: ${new Date(u.lastLogin).toLocaleString()}`}>
+                            {new Date(u.lastLogin).toLocaleDateString()}
+                          </Meta>
+                          {u.email ? (
+                            <Meta icon="mail" tip={u.email}><span className="chip-ellipsis">{u.email}</span></Meta>
+                          ) : (
+                            <span className="chip-missing" data-tip="Este usuario no recibirá avisos hasta registrar un correo">
+                              <Icon name="warning" size={14} /> Sin correo
                             </span>
                           )}
-                        </span>
-                        <span className="admin-user-handle">@{u.username}</span>
+                          <Meta icon="task_alt" tip={`${userActs.length} ${userActs.length === 1 ? 'actividad' : 'actividades'}`}>
+                            {userActs.length}
+                          </Meta>
+                          {overdueTotal > 0 && (
+                            <Meta icon="alarm" tip={`${overdueTotal} ${overdueTotal === 1 ? 'tarea retrasada' : 'tareas retrasadas'}`} tone="danger">
+                              {overdueTotal}
+                            </Meta>
+                          )}
+                        </div>
                       </div>
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-icon-only edit-email-btn"
-                        onClick={(e) => openEmailEditor(u, e)}
-                        title="Editar correo"
-                      >
-                        <span className="material-symbols-rounded" style={{ fontSize: '16px' }}>mail</span>
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-icon-only delete-user-btn"
-                        onClick={(e) => handleDeleteUser(u.username, e)}
-                        title="Eliminar usuario"
-                      >
-                        <span className="material-symbols-rounded" style={{ fontSize: '16px' }}>delete</span>
-                      </button>
                     </div>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                      Última sesión: {new Date(u.lastLogin).toLocaleDateString()}
-                    </span>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                      {u.email || 'Sin correo registrado'}
-                    </span>
-                    <span className="column-count" style={{ width: 'fit-content', marginBottom: '0.5rem' }}>
-                      {userActs.length} {userActs.length === 1 ? 'actividad' : 'actividades'}
-                    </span>
                   </div>
 
                   <div
@@ -1446,33 +1410,11 @@ function App() {
                     {isStatusShown('todo') && (
                     <div className="admin-mini-column">
                       <span className="admin-mini-column-label" style={{ color: 'var(--color-todo)' }}>
-                        ● Por Realizar ({userActs.filter(a => a.status === 'todo').length})
+                        <Icon name="assignment" size={14} /> Por hacer ({userActs.filter(a => a.status === 'todo').length})
                       </span>
-                      {userActs.filter(a => a.status === 'todo').map(a => {
-                        const prio = a.priority || 'media';
-                        return (
-                          <div key={a.id} className={`admin-mini-card mini-todo ${isOverdue(a) ? 'overdue' : ''}`}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.15rem', gap: '0.4rem' }}>
-                              <div className="admin-mini-card-title">{a.title}</div>
-                              <span className={`priority-badge prio-${prio}`} style={{ fontSize: '0.55rem', padding: '0.05rem 0.25rem' }}>
-                                {prio.substring(0, 1).toUpperCase()}
-                              </span>
-                            </div>
-                            {a.assignedBy && (
-                              <div className="admin-mini-card-by">★ Por: {a.assignedBy}</div>
-                            )}
-                            <div className="admin-mini-card-dates">
-                              {a.startDate} / <span className={isOverdue(a) ? 'overdue-date' : undefined}>{a.endDate}</span>
-                            </div>
-                            {isOverdue(a) && (
-                              <div className="overdue-mini-note">
-                                <span className="material-symbols-rounded" style={{ fontSize: '13px' }}>alarm</span>
-                                Retrasada · {overdueLabel(a.endDate, today)}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
+                      {userActs.filter(a => a.status === 'todo').map(a => (
+                        <MiniTaskCard key={a.id} act={a} today={today} overdue={isOverdue(a)} status="todo" />
+                      ))}
                     </div>
                     )}
 
@@ -1480,38 +1422,11 @@ function App() {
                     {isStatusShown('doing') && (
                     <div className="admin-mini-column">
                       <span className="admin-mini-column-label" style={{ color: 'var(--color-doing)' }}>
-                        ● En Realización ({userActs.filter(a => a.status === 'doing').length})
+                        <Icon name="schedule" size={14} /> En curso ({userActs.filter(a => a.status === 'doing').length})
                       </span>
-                      {userActs.filter(a => a.status === 'doing').map(a => {
-                        const prio = a.priority || 'media';
-                        return (
-                          <div key={a.id} className={`admin-mini-card mini-doing ${isOverdue(a) ? 'overdue' : ''}`}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.15rem', gap: '0.4rem' }}>
-                              <div className="admin-mini-card-title">{a.title}</div>
-                              <div style={{ display: 'flex', gap: '0.2rem', alignItems: 'center' }}>
-                                <span className="priority-badge" style={{ fontSize: '0.55rem', padding: '0.05rem 0.25rem', color: 'var(--color-doing)' }}>
-                                  {a.progress ?? 50}%
-                                </span>
-                                <span className={`priority-badge prio-${prio}`} style={{ fontSize: '0.55rem', padding: '0.05rem 0.25rem' }}>
-                                  {prio.substring(0, 1).toUpperCase()}
-                                </span>
-                              </div>
-                            </div>
-                            {a.assignedBy && (
-                              <div className="admin-mini-card-by">★ Por: {a.assignedBy}</div>
-                            )}
-                            <div className="admin-mini-card-dates">
-                              {a.startDate} / <span className={isOverdue(a) ? 'overdue-date' : undefined}>{a.endDate}</span>
-                            </div>
-                            {isOverdue(a) && (
-                              <div className="overdue-mini-note">
-                                <span className="material-symbols-rounded" style={{ fontSize: '13px' }}>alarm</span>
-                                Retrasada · {overdueLabel(a.endDate, today)}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
+                      {userActs.filter(a => a.status === 'doing').map(a => (
+                        <MiniTaskCard key={a.id} act={a} today={today} overdue={isOverdue(a)} status="doing" />
+                      ))}
                     </div>
                     )}
 
@@ -1519,51 +1434,23 @@ function App() {
                     {isStatusShown('done') && (
                     <div className="admin-mini-column">
                       <span className="admin-mini-column-label" style={{ color: 'var(--color-done)' }}>
-                        ● Realizado ({userActs.filter(a => a.status === 'done').length})
+                        <Icon name="check_circle" size={14} /> Hecho ({userActs.filter(a => a.status === 'done').length})
                       </span>
-                      {userActs.filter(a => a.status === 'done').map(a => {
-                        const prio = a.priority || 'media';
-                        return (
-                          <div key={a.id} className="admin-mini-card mini-done">
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.15rem', gap: '0.4rem' }}>
-                              <div className="admin-mini-card-title">{a.title}</div>
-                              <span className={`priority-badge prio-${prio}`} style={{ fontSize: '0.55rem', padding: '0.05rem 0.25rem' }}>
-                                {prio.substring(0, 1).toUpperCase()}
-                              </span>
-                            </div>
-                            {a.assignedBy && (
-                              <div className="admin-mini-card-by">★ Por: {a.assignedBy}</div>
-                            )}
-                            <div className="admin-mini-card-dates">{a.startDate} / {a.endDate}</div>
-                          </div>
-                        );
-                      })}
+                      {userActs.filter(a => a.status === 'done').map(a => (
+                        <MiniTaskCard key={a.id} act={a} today={today} overdue={isOverdue(a)} status="done" />
+                      ))}
                     </div>
                     )}
 
                     {/* Cancelled mini list */}
                     {isStatusShown('cancelled') && (
                     <div className="admin-mini-column">
-                      <span className="admin-mini-column-label" style={{ color: '#d93025' }}>
-                        ● Cancelado ({userActs.filter(a => a.status === 'cancelled').length})
+                      <span className="admin-mini-column-label" style={{ color: 'var(--color-danger)' }}>
+                        <Icon name="cancel" size={14} /> Cancelado ({userActs.filter(a => a.status === 'cancelled').length})
                       </span>
-                      {userActs.filter(a => a.status === 'cancelled').map(a => {
-                        const prio = a.priority || 'media';
-                        return (
-                          <div key={a.id} className="admin-mini-card mini-cancelled">
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.15rem', gap: '0.4rem' }}>
-                              <div className="admin-mini-card-title">{a.title}</div>
-                              <span className={`priority-badge prio-${prio}`} style={{ fontSize: '0.55rem', padding: '0.05rem 0.25rem' }}>
-                                {prio.substring(0, 1).toUpperCase()}
-                              </span>
-                            </div>
-                            {a.assignedBy && (
-                              <div className="admin-mini-card-by">★ Por: {a.assignedBy}</div>
-                            )}
-                            <div className="admin-mini-card-dates">{a.startDate} / {a.endDate}</div>
-                          </div>
-                        );
-                      })}
+                      {userActs.filter(a => a.status === 'cancelled').map(a => (
+                        <MiniTaskCard key={a.id} act={a} today={today} overdue={isOverdue(a)} status="cancelled" />
+                      ))}
                     </div>
                     )}
                   </div>

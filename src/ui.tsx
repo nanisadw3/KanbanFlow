@@ -63,7 +63,9 @@ export function Avatar({ name, size = 36, online }: { name: string; size?: numbe
     <span
       className="avatar"
       style={{ ['--sz' as string]: `${size}px`, ['--av' as string]: `var(${token})`, ['--av-rgb' as string]: `var(${token}-rgb)` }}
-      data-tip={online === undefined ? undefined : (online ? `${name} · en línea` : name)}
+      data-tip={online ? `${name} · en línea` : name}
+      role="img"
+      aria-label={online ? `${name} · en línea` : name}
     >
       {initialsOf(name)}
       {online && <span className="avatar-online" />}
