@@ -11,6 +11,7 @@ import { normalizeEmail } from './email.ts';
 import { createMailer, mailerFromConfig, newTaskMessage, type Mailer } from './mailer.ts';
 import { ensureSettingsTable, getSetting, setSetting, resolveSmtpConfig, saveSmtpSettings, publicSmtpSettings } from './settings.ts';
 import { autoCompleteAtFull } from './autocomplete.ts';
+import { validateNewUser, createUser, touchLogin } from './users.ts';
 import { createOverdueChecker } from './overdue.ts';
 
 interface Activity {
@@ -457,45 +458,43 @@ io.on('connection', async (socket) => {
     reply({ ok: true });
   });
 
-  socket.on('user:login', async (payload: { username: string; fullName?: string; email?: string } | string) => {
-    const username = await canonicalUsername(typeof payload === 'string' ? payload : payload.username);
-    const fullName = typeof payload === 'string' ? undefined : payload.fullName;
-    const email = typeof payload === 'string' ? null : normalizeEmail(payload.email);
-    // Role is decided server-side: a login never grants or changes it (admins are
-    // made through user:create or the database), apart from the built-in "admin".
-    const role = username.toLowerCase() === 'admin' ? 'admin' : 'user';
-    const lastLogin = new Date().toISOString();
-
-    await db.run(
-      `INSERT INTO users (username, fullName, role, lastLogin, email) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(username) DO UPDATE SET
-         fullName = COALESCE(excluded.fullName, users.fullName),
-         email = COALESCE(users.email, excluded.email),
-         lastLogin = excluded.lastLogin`,
-      [username, fullName || null, role, lastLogin, email]
-    );
+  // A login only touches an EXISTING user: accounts are created by admins (user:create).
+  // Role and admin rights are never granted here.
+  socket.on('user:login', async (
+    payload: { username: string; fullName?: string; email?: string } | string,
+    ack?: (res: { ok: boolean; error?: string }) => void
+  ) => {
+    const reply = ack ?? (() => {});
+    const raw = typeof payload === 'string' ? payload : payload?.username;
+    const username = await canonicalUsername(typeof raw === 'string' ? raw : '');
+    const fullName = typeof payload === 'string' ? undefined : payload?.fullName;
+    const email = typeof payload === 'string' ? null : normalizeEmail(payload?.email);
+    if (!(await touchLogin(db, username, fullName, email))) return reply({ ok: false, error: 'unknown_user' });
     await ensureAdminPasswords();
     await broadcastUsers();
+    reply({ ok: true });
   });
 
-  socket.on('user:create', async (payload: { username: string; fullName: string; role: 'admin' | 'user'; password?: string; email?: string }) => {
-    const { fullName } = payload;
-    const email = normalizeEmail(payload.email);
-    if (!email) return;
-    const role = payload.role === 'admin' ? 'admin' : 'user';
-    const username = await canonicalUsername(payload.username);
-    const lastLogin = new Date().toISOString();
-    const password = typeof payload.password === 'string' ? payload.password : '';
-    if (role === 'admin' && password.length < MIN_PASSWORD_LENGTH) return;
-    const passwordHash = role === 'admin' ? await hashPassword(password) : null;
-    await db.run(
-      `INSERT INTO users (username, fullName, role, lastLogin, passwordHash, email) VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(username) DO UPDATE SET fullName = excluded.fullName, role = excluded.role, email = excluded.email,
-         passwordHash = COALESCE(excluded.passwordHash, users.passwordHash)`,
-      [username, fullName, role, lastLogin, passwordHash, email]
-    );
-    await ensureAdminPasswords();
+  // Only an admin can create users; the caller proves it with their own password
+  // (verified here, like settings:saveMail), so a raw socket client can't do it.
+  socket.on('user:create', async (
+    payload: {
+      adminUsername?: string; adminPassword?: string;
+      username?: string; fullName?: string; role?: string; password?: string; email?: string;
+    },
+    ack?: (res: { ok: boolean; error?: string }) => void
+  ) => {
+    const reply = ack ?? (() => {});
+    if (!(await checkAdmin(payload?.adminUsername, payload?.adminPassword))) return reply(await failAuth('bad_password'));
+    failedAuthAttempts = 0;
+    const valid = validateNewUser(payload, MIN_PASSWORD_LENGTH);
+    if (!valid.ok) return reply({ ok: false, error: valid.error });
+    const u = valid.user;
+    const passwordHash = u.role === 'admin' ? await hashPassword(u.password) : null;
+    const created = await createUser(db, { username: u.username, fullName: u.fullName, role: u.role, email: u.email, passwordHash });
+    if (!created.ok) return reply({ ok: false, error: created.error });
     await broadcastUsers();
+    reply({ ok: true });
   });
 
   socket.on('user:setEmail', async (

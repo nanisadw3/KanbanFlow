@@ -131,13 +131,9 @@ export const loginUser = async (username: string, fullName?: string, role?: 'adm
   return user;
 };
 
-export const createUserByAdmin = async (username: string, fullName: string, role: 'admin' | 'user', email: string, password?: string): Promise<void> => {
-  socket.emit('user:create', { username, fullName, role, email, password });
-};
-
 // --- Admin passwords (verified by the server; hashes never reach the client) ---
 
-export type AuthResult = { ok: boolean; error?: 'bad_password' | 'too_short' | 'timeout' | 'invalid_email' | 'not_found' };
+export type AuthResult = { ok: boolean; error?: 'bad_password' | 'too_short' | 'timeout' | 'invalid_email' | 'not_found' | 'exists' | 'invalid_username' | 'invalid_name' };
 
 const emitWithAck = (event: string, payload: object): Promise<AuthResult> =>
   new Promise(resolve => {
@@ -151,6 +147,12 @@ export const loginAdmin = (username: string, password: string): Promise<AuthResu
 
 export const changeAdminPassword = (username: string, currentPassword: string, newPassword: string): Promise<AuthResult> =>
   emitWithAck('auth:changePassword', { username, currentPassword, newPassword });
+
+// Creating a user needs an admin's username + password; the server verifies them.
+export const createUserByAdmin = (payload: {
+  adminUsername: string; adminPassword: string;
+  username: string; fullName: string; role: 'admin' | 'user'; email: string; password?: string;
+}): Promise<AuthResult> => emitWithAck('user:create', payload);
 
 export const setUserEmail = (username: string, email: string): Promise<AuthResult> =>
   emitWithAck('user:setEmail', { username, email });

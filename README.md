@@ -41,7 +41,7 @@ npm run dev       # Starts backend (Socket.io/SQLite on port 3001) + Vite dev se
 
 ### Logging in
 
-There's no real auth — usernames are free-text. Typing `admin` reveals a password field; the admin password is `admin` (see `handleLogin` in `src/App.tsx`). Any other username logs in directly and is created on first login.
+There's no session-based auth, and **there is no self-registration**: only an administrator can create users (admin panel → "Nuevo Usuario", which asks for the admin's own password; the server verifies it). Typing an unknown username at login shows "Ese usuario no existe". Admin accounts (role `admin`) log in with a password; regular users log in with just their username. A brand-new database starts with a single `admin` user (password `admin` — change it right away from the key button) so the first admin can create everyone else.
 
 ## Email notifications
 

@@ -46,8 +46,6 @@ function App() {
   const [usernameInput, setUsernameInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [fullNameInput, setFullNameInput] = useState('');
-  const [isNewUserPrompt, setIsNewUserPrompt] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [currentView, setCurrentView] = useState<'board' | 'stats'>('board');
 
@@ -102,8 +100,8 @@ function App() {
   const [mailHasPassword, setMailHasPassword] = useState(false);
   const [mailBusy, setMailBusy] = useState(false);
   const [mailMsg, setMailMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const [emailInput, setEmailInput] = useState('');            // login: usuario nuevo
   const [newUserEmail, setNewUserEmail] = useState('');        // modal "Agregar usuario"
+  const [newUserAdminPassword, setNewUserAdminPassword] = useState('');
   const [emailEditTarget, setEmailEditTarget] = useState<string | null>(null); // admin edita el correo de otro
   const [emailDialogValue, setEmailDialogValue] = useState('');
   const [emailDialogError, setEmailDialogError] = useState('');
@@ -315,8 +313,6 @@ function App() {
   const handleUsernameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setUsernameInput(val);
-    setIsNewUserPrompt(false);
-    setFullNameInput('');
     const typed = val.trim().toLowerCase();
     if (typed === 'admin' || users.some(u => u.username.toLowerCase() === typed && u.role === 'admin')) {
       setShowPassword(true);
@@ -356,32 +352,16 @@ function App() {
       return;
     }
 
-    if (!existingUser && !isNewUserPrompt) {
-      setIsNewUserPrompt(true);
+    // Accounts are created by admins only; there is no self-registration.
+    if (!existingUser) {
+      setErrorMsg(users.length === 0
+        ? 'Conectando con el servidor, intenta de nuevo en un momento'
+        : 'Ese usuario no existe. Pide a un administrador que te cree una cuenta.');
       return;
     }
 
-    if (isNewUserPrompt) {
-      if (!fullNameInput.trim()) {
-        setErrorMsg('Por favor escribe tu Nombre y Apellido');
-        return;
-      }
-      if (!isEmailValid(emailInput)) {
-        setErrorMsg('Escribe un correo electrónico válido');
-        return;
-      }
-    }
-
-    const loggedIn = await loginUser(
-      existingUser?.username ?? cleanUsername,
-      isNewUserPrompt ? fullNameInput.trim() : existingUser?.fullName,
-      existingUser?.role || (cleanUsername.toLowerCase() === 'admin' ? 'admin' : 'user'),
-      isNewUserPrompt ? emailInput.trim() : undefined
-    );
+    const loggedIn = await loginUser(existingUser.username, existingUser.fullName, existingUser.role);
     setUser(loggedIn);
-    setIsNewUserPrompt(false);
-    setFullNameInput('');
-    setEmailInput('');
   };
 
   const openCreateUserModal = () => {
@@ -390,6 +370,7 @@ function App() {
     setNewUserRole('user');
     setNewUserPassword('');
     setNewUserEmail('');
+    setNewUserAdminPassword('');
     setCreateUserError('');
     setIsCreateUserModalOpen(true);
   };
@@ -520,7 +501,23 @@ function App() {
       return;
     }
 
-    await createUserByAdmin(cleanUsername, cleanFullName, newUserRole, newUserEmail.trim(), newUserRole === 'admin' ? newUserPassword : undefined);
+    if (!user) return;
+    const res = await createUserByAdmin({
+      adminUsername: user.username, adminPassword: newUserAdminPassword,
+      username: cleanUsername, fullName: cleanFullName, role: newUserRole, email: newUserEmail.trim(),
+      password: newUserRole === 'admin' ? newUserPassword : undefined,
+    });
+    if (!res.ok) {
+      const messages: Record<string, string> = {
+        bad_password: 'Tu contraseña de administrador es incorrecta.',
+        exists: 'El nombre de usuario ya está registrado.',
+        invalid_email: 'Escribe un correo electrónico válido.',
+        too_short: 'La contraseña del administrador debe tener al menos 4 caracteres.',
+        timeout: 'No se pudo conectar con el servidor.',
+      };
+      setCreateUserError(messages[res.error ?? ''] ?? 'No se pudo crear el usuario.');
+      return;
+    }
     setIsCreateUserModalOpen(false);
   };
 
@@ -529,9 +526,6 @@ function App() {
     setUser(null);
     setUsernameInput('');
     setPasswordInput('');
-    setFullNameInput('');
-    setEmailInput('');
-    setIsNewUserPrompt(false);
     setShowPassword(false);
     handleSelectUser(null);
   };
@@ -962,41 +956,6 @@ function App() {
               />
             </div>
 
-            <div className={`auth-expandable-field ${isNewUserPrompt ? 'is-expanded' : ''}`}>
-              <div className="auth-expandable-content">
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label">Nombre y Apellido</label>
-                  <div style={{ position: 'relative' }}>
-                    <input
-                      type="text"
-                      className="form-input"
-                      placeholder="Ej. Juan Pérez"
-                      value={fullNameInput}
-                      onChange={(e) => setFullNameInput(e.target.value)}
-                      style={{ paddingLeft: '2.5rem' }}
-                      autoFocus={isNewUserPrompt}
-                      required={isNewUserPrompt}
-                    />
-                    <span className="material-symbols-rounded" style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', fontSize: '20px' }}>badge</span>
-                  </div>
-                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.4rem' }}>
-                    Usuario nuevo detectado. Por favor ingresa tu Nombre y Apellido para completar tu registro.
-                  </p>
-                </div>
-                <div className="form-group" style={{ marginTop: '0.75rem', marginBottom: 0 }}>
-                  <label className="form-label">Correo electrónico</label>
-                  <input
-                    type="email"
-                    className="form-input"
-                    placeholder="Ej. juan@empresa.com"
-                    value={emailInput}
-                    onChange={(e) => setEmailInput(e.target.value)}
-                    required={isNewUserPrompt}
-                  />
-                </div>
-              </div>
-            </div>
-
             <div className={`auth-expandable-field ${showPassword ? 'is-expanded' : ''}`}>
               <div className="auth-expandable-content">
                 <div className="form-group" style={{ marginBottom: 0 }}>
@@ -1020,7 +979,7 @@ function App() {
             {errorMsg && <p className="form-error">{errorMsg}</p>}
 
             <button type="submit" className="btn btn-primary" style={{ gap: '0.5rem' }}>
-              <span className="material-symbols-rounded">{isNewUserPrompt ? 'person_add' : 'login'}</span> {isNewUserPrompt ? 'Registrar y Entrar' : 'Iniciar Sesión'}
+              <span className="material-symbols-rounded">login</span> Iniciar Sesión
             </button>
           </form>
         </div>
@@ -2180,6 +2139,19 @@ function App() {
                   />
                 </div>
               )}
+
+              <div className="form-group">
+                <label className="form-label">Tu contraseña de administrador</label>
+                <input
+                  type="password"
+                  className="form-input"
+                  autoComplete="current-password"
+                  placeholder="Necesaria para crear usuarios"
+                  value={newUserAdminPassword}
+                  onChange={(e) => setNewUserAdminPassword(e.target.value)}
+                  required
+                />
+              </div>
 
               {createUserError && (
                 <p className="form-error" style={{ margin: '0' }}>{createUserError}</p>

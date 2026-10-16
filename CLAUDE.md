@@ -24,7 +24,7 @@ A real-time multi-user Kanban board. Spanish UI, informal user (typos in prompts
 
 ## Auth
 
-Not real auth. `usernameInput.toLowerCase() === 'admin'` reveals a password field; the check is a hardcoded string comparison (`passwordInput !== 'admin'`) in `handleLogin`. Any other username logs in immediately, creating a `users` doc on first login via `loginUser`. `isAdmin` throughout the app is computed as `user?.username.toLowerCase() === 'admin'`, not a stored role.
+Not session-based auth. Admin accounts (role `admin`, or the built-in `admin`) log in with a password that the server verifies (`auth:login`); regular users log in by username only. **No self-registration:** `user:login` only updates an existing user (`touchLogin` in `server/users.ts`) and replies `unknown_user` otherwise; the login screen shows "Ese usuario no existe". Users are created only through `user:create`, which requires the calling admin's username+password in the payload (`checkAdmin`) — the server never trusts a socket just because it's connected — and never overwrites an existing user (case-insensitive), so it can't be used to change someone's role. `isAdmin` in the client is `user.username.toLowerCase() === 'admin' || user.role === 'admin'`. Still unauthenticated: deleting users/tasks/teams and editing tasks (a known, accepted gap).
 
 ## Real-time sync
 
@@ -81,6 +81,7 @@ CSS custom properties (design tokens) drive both themes; dark is default. No har
 - Overdue email: `runOverdueCheck` (`server/overdue.ts`) runs at startup and every 5 min. `activities.overdueNotifiedAt` is stamped only after a successful send, so SMTP failures and users without an email are retried. The stamp is cleared when `endDate` changes or a task leaves done/cancelled (SQL `CASE` in `activity:update` / `activity:updateStatus`).
 - Auto-complete: `autoCompleteAtFull` (`server/autocomplete.ts`), applied in `activity:update`, moves a todo/doing task to done when its progress *changes* to 100 (an already-100% task dragged back to doing doesn't bounce). `updateActivityStatus` (drag) is not affected. A one-time startup sweep (flag `sweep_100_done` in `settings`) moved pre-existing 100% todo/doing tasks to done.
 - The red "Retrasada" styling is computed in the client (`isOverdue` in `App.tsx`, `today` refreshed every minute) and is independent of the server's stamp.
+- Testing gotcha: a copy of `kanban.db` carries the real SMTP settings (and overdue stamps), so a test server started on a copy **will send real emails**. Delete the `smtp_*` rows from the copy (`delete from settings where key like 'smtp_%'`) and start with no `SMTP_*` env vars before testing.
 - Gotcha: `io.on('connection')` registers its socket handlers after awaiting the initial snapshots, so a script client that emits immediately on connect loses the event. Wait ~600 ms first when testing with a raw socket.io client.
 
 ## Google Calendar sync
@@ -97,7 +98,7 @@ CSS custom properties (design tokens) drive both themes; dark is default. No har
 
 - No real authentication/authorization system — the current username-only login is intentional for now.
 - No component splitting of `App.tsx` — it's one big component by accumulated decision, not oversight. If asked to refactor, confirm scope first; this file has been iterated on heavily and a refactor is a good way to reintroduce the drag-and-drop bugs above.
-- No client test suite exists. `npm run test:server` (node:test via tsx) covers only the server modules `server/email.ts`, `mailer.ts`, `overdue.ts`, `settings.ts` and `autocomplete.ts`; the client and `server/index.ts` are verified with `npx tsc --noEmit -p tsconfig.app.json`, `npm run build`, `npx oxlint src/`, and manual/browser-automation testing. `npm test` itself does nothing meaningful. Note no tsconfig covers `server/`; typecheck it with `npx tsc --noEmit --ignoreConfig --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck --allowImportingTsExtensions --esModuleInterop --strict --types node server/index.ts`.
+- No client test suite exists. `npm run test:server` (node:test via tsx) covers only the server modules `server/email.ts`, `mailer.ts`, `overdue.ts`, `settings.ts`, `autocomplete.ts` and `users.ts`; the client and `server/index.ts` are verified with `npx tsc --noEmit -p tsconfig.app.json`, `npm run build`, `npx oxlint src/`, and manual/browser-automation testing. `npm test` itself does nothing meaningful. Note no tsconfig covers `server/`; typecheck it with `npx tsc --noEmit --ignoreConfig --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck --allowImportingTsExtensions --esModuleInterop --strict --types node server/index.ts`.
 
 ## Docker / deployment
 
