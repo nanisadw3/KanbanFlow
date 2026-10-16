@@ -88,6 +88,7 @@ export function Meta({ icon, tip, children, tone }: { icon: string; tip: string;
   return (
     <span className={`meta ${tone === 'danger' ? 'meta-danger' : ''}`} data-tip={tip}>
       <Icon name={icon} size={14} />
+      <span className="sr-only">{tip}: </span>
       {children}
     </span>
   );
@@ -100,7 +101,7 @@ export function TaskDates({ start, end, overdueDays }: { start: string; end: str
         {formatShortDate(start)} <Icon name="arrow_right_alt" size={14} /> {formatShortDate(end)}
       </Meta>
       {overdueDays !== undefined && overdueDays > 0 && (
-        <Meta icon="alarm" tip={overdueDays === 1 ? 'Retrasada: venció ayer' : `Retrasada: venció hace ${overdueDays} días`} tone="danger">
+        <Meta icon="alarm" tip={overdueDays === 1 ? `Retrasada: venció ayer (debía terminar el ${end})` : `Retrasada: venció hace ${overdueDays} días (debía terminar el ${end})`} tone="danger">
           {overdueDays} d
         </Meta>
       )}
@@ -167,9 +168,6 @@ export function TaskCardBody({
           <PriorityFlag priority={act.priority} />
           {showProgress && (
             <Meta icon="donut_small" tip="Avance">{act.progress ?? 50}%</Meta>
-          )}
-          {overdue && (
-            <Meta icon="alarm" tip={`Retrasada: debía terminar el ${act.endDate}`} tone="danger">Retrasada</Meta>
           )}
           {onArchive && (
             <IconButton

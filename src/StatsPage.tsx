@@ -83,6 +83,7 @@ function StatsPage({ onBack }: { onBack: () => void }) {
             className="btn btn-secondary btn-icon-only"
             onClick={onBack}
             data-tip="Volver al Tablero"
+            aria-label="Volver al Tablero"
             style={{ width: '40px', height: '40px', padding: '0', borderRadius: '50%' }}
           >
             <span className="material-symbols-rounded">arrow_back</span>
@@ -96,6 +97,7 @@ function StatsPage({ onBack }: { onBack: () => void }) {
           className="btn btn-secondary btn-icon-only"
           onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
           data-tip="Cambiar Tema"
+          aria-label="Cambiar Tema"
         >
           <span className="material-symbols-rounded">{theme === 'dark' ? 'light_mode' : 'dark_mode'}</span>
         </button>
@@ -172,14 +174,14 @@ function StatsPage({ onBack }: { onBack: () => void }) {
                 <div className="stats-row-head">
                   <span className="stats-row-name">{r.displayName} <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 'normal' }}>({r.username})</span>
                     {r.overdue > 0 && (
-                      <Meta icon="alarm" tip={`${r.overdue} retrasadas · ${r.overdueShare}% de las abiertas`} tone="danger">{r.overdue} · {r.overdueShare}%</Meta>
+                      <Meta icon="alarm" tip={`${r.overdue} ${r.overdue === 1 ? 'retrasada' : 'retrasadas'} · ${r.overdueShare}% de las abiertas`} tone="danger">{r.overdue} · {r.overdueShare}%</Meta>
                     )}
                   </span>
                   <span className="stats-row-rate">
-                    <span className="rate-chip" style={{ ['--c' as string]: 'var(--color-todo)' }} data-tip="Por realizar"><Icon name="assignment" size={14} />{r.todoRate}%</span>
-                    <span className="rate-chip" style={{ ['--c' as string]: 'var(--color-doing)' }} data-tip="En proceso"><Icon name="schedule" size={14} />{r.doingRate}%</span>
-                    <span className="rate-chip" style={{ ['--c' as string]: 'var(--color-done)' }} data-tip="Completado"><Icon name="check_circle" size={14} />{r.rate}%</span>
-                    <span className="rate-chip" style={{ ['--c' as string]: 'var(--color-danger)' }} data-tip="Cancelado"><Icon name="cancel" size={14} />{r.cancelRate}%</span>
+                    <span className="rate-chip" style={{ ['--c' as string]: 'var(--color-todo)' }} data-tip="Por realizar" role="img" aria-label={`Por realizar: ${r.todoRate}%`}><Icon name="assignment" size={14} />{r.todoRate}%</span>
+                    <span className="rate-chip" style={{ ['--c' as string]: 'var(--color-doing)' }} data-tip="En proceso" role="img" aria-label={`En proceso: ${r.doingRate}%`}><Icon name="schedule" size={14} />{r.doingRate}%</span>
+                    <span className="rate-chip" style={{ ['--c' as string]: 'var(--color-done)' }} data-tip="Completado" role="img" aria-label={`Completado: ${r.rate}%`}><Icon name="check_circle" size={14} />{r.rate}%</span>
+                    <span className="rate-chip" style={{ ['--c' as string]: 'var(--color-danger)' }} data-tip="Cancelado" role="img" aria-label={`Cancelado: ${r.cancelRate}%`}><Icon name="cancel" size={14} />{r.cancelRate}%</span>
                   </span>
                 </div>
                 {r.total === 0 ? (

@@ -4,7 +4,7 @@ A real-time, multi-user Kanban board built with React + TypeScript + Node.js (SQ
 
 ## Features
 
-- **Kanban board** with three columns (Por Realizar / En Proceso / Realizado) plus a drag-and-hold-to-trash gesture for cancelling tasks.
+- **Kanban board** with three columns (Por Realizar / En Proceso / Hecho) plus a drag-and-hold-to-trash gesture for cancelling tasks.
 - **Real-time sync** across devices powered by **WebSockets (Socket.io)** — any change (create, move, edit, delete) shows up instantly for everyone looking at the same board.
 - **Local SQLite Database** — persistence stored locally in `kanban.db` via Node.js Express server.
 - **Presence indicators** — see who else is online and which board they're currently viewing.
@@ -12,10 +12,10 @@ A real-time, multi-user Kanban board built with React + TypeScript + Node.js (SQ
 - **Teams** — group users into teams with a shared Kanban board; task assignment is restricted to that team's members.
 - **Auto-archive / Historial** — completed tasks stay on the live board for 1 day, then quietly move to a per-context "Historial" view (still there, just off the busy board).
 - **Email notices** — every user has a required email; when an admin creates a task for someone they get an email, and a one-time email when one of their tasks becomes overdue. Overdue tasks are also highlighted in red on the board (see [Email notifications](#email-notifications)).
-- **Overdue tasks, front and center** — the admin dashboard has a "Retrasadas" card that filters (combined with the status filters), people with late tasks are listed first with a red badge, each late task shows "Venció hace N días", and the productivity page reports the count and the share of open tasks that are late per person and overall.
+- **Overdue tasks, front and center** — the admin dashboard has a "Retrasadas" card that filters (combined with the status filters), people with late tasks are listed first with a red badge, each late task shows an alarm with "N d" (the long text, "venció hace N días", is in its tooltip), and the productivity page reports the count and the share of open tasks that are late per person and overall.
 - **Filters reach the teams** — the Equipos panel is expanded by default and can be minimized at any time with "Minimizar"; when an admin filter becomes active it collapses to a strip that lists only the teams with tasks matching it (e.g. "SEOSG · 1 retrasada"), and "Todos"/"Minimizar" toggle it (expanded, matching teams are highlighted and the rest dimmed).
 - **Icon-first interface** — buttons, card metadata, stats and form labels lead with icons; the text lives in tooltips (`data-tip`).
-- **Auto-complete at 100%** — raising a task's progress to 100 moves it to "Realizado" by itself.
+- **Auto-complete at 100%** — raising a task's progress to 100 moves it to "Hecho" by itself.
 - **Light/dark theme**, persisted in `localStorage`.
 
 ## Tech stack

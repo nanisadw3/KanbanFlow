@@ -30,7 +30,7 @@ import {
 import type { Activity, User, Team, PresenceEntry } from './db';
 // Using Material Symbols Rounded via Google Fonts, no Lucide React imports needed
 import './App.css';
-import { todayString, isOverdue as isOverdueOn } from './dates';
+import { todayString, isOverdue as isOverdueOn, formatShortDate } from './dates';
 import { Icon, IconButton, Avatar, Meta, MiniTaskCard, TaskCardBody, FieldLabel, Segmented } from './ui';
 import { isFilterActive, summarizeMatches, describeMatches } from './filters';
 import StatsPage from './StatsPage';
@@ -1051,7 +1051,7 @@ function App() {
 
       {!isAdmin && !viewingTeam && myTeams.length > 0 && (
         <div className="my-teams-row animate-fade-in">
-          <span className="my-teams-label" data-tip="Mis equipos"><Icon name="groups" size={20} /></span>
+          <span className="my-teams-label" data-tip="Mis equipos" role="img" aria-label="Mis equipos"><Icon name="groups" size={20} /></span>
           {myTeams.map(t => (
             <button key={t.id} type="button" className="team-pill" onClick={() => handleSelectTeam(t)}>
               <span className="material-symbols-rounded" style={{ fontSize: '16px' }}>groups</span> {t.name}
@@ -1103,7 +1103,7 @@ function App() {
                   onClick={() => toggleStatusFilter(cfg.key)}
                   aria-pressed={isActive}
                   data-tip={`Filtrar por: ${cfg.full}`}
-                  aria-label={`Filtrar por: ${cfg.full}`}
+                  aria-label={`Filtrar por: ${cfg.full}, ${activities.filter(a => a.status === cfg.key && !a.teamId).length}`}
                 >
                   {isActive && (
                     <span className="stat-filter-check">
@@ -1131,7 +1131,7 @@ function App() {
                   onClick={() => setOverdueOnly(o => !o)}
                   aria-pressed={overdueOnly}
                   data-tip="Filtrar por: Retrasadas"
-                  aria-label="Filtrar por: Retrasadas"
+                  aria-label={`Filtrar por: Retrasadas, ${overdueCount}`}
                 >
                   {overdueOnly && (
                     <span className="stat-filter-check">
@@ -1193,7 +1193,6 @@ function App() {
                             className={`user-chip ${isActive ? 'is-active' : ''}`}
                             onClick={() => toggleUserFilter(u.username)}
                             aria-pressed={isActive}
-                            title={`Filtrar por: ${displayName}`}
                           >
                             <span className="user-chip-name">{displayName}</span>
                           </button>
@@ -1305,7 +1304,7 @@ function App() {
                 {teamRows.map(({ team: t, summary, matches }) => {
                   const teamTaskCount = activities.filter(a => a.teamId === t.id).length;
                   return (
-                    <div key={t.id} className={`team-card ${filterActive ? (matches ? 'is-match' : 'is-dimmed') : ''}`} onClick={() => handleSelectTeam(t)} title="Clic para ver el tablero de este equipo">
+                    <div key={t.id} className={`team-card ${filterActive ? (matches ? 'is-match' : 'is-dimmed') : ''}`} onClick={() => handleSelectTeam(t)}>
                       <IconButton icon="delete" label="Eliminar equipo" variant="danger" size={30} className="team-card-delete" onClick={(e) => handleDeleteTeam(t.id, t.name, e)} />
                       <div className="team-card-icon">
                         <span className="material-symbols-rounded">groups</span>
@@ -1367,7 +1366,6 @@ function App() {
                   className="admin-user-row"
                   key={u.username}
                   onClick={() => handleSelectUser(u)}
-                  title="Clic para ver y gestionar el tablero de este usuario"
                   style={{ cursor: 'pointer', transition: 'var(--transition-smooth)' }}
                 >
                   <div className="admin-user-info">
@@ -1376,7 +1374,7 @@ function App() {
                       <div className="user-card-body">
                         <div className="user-card-top">
                           <div className="user-card-names">
-                            <span className="admin-username">{displayName}</span>
+                            <span className="admin-username" data-tip={displayName}>{displayName}</span>
                             <span className="admin-user-handle">@{u.username}</span>
                           </div>
                           <div className="user-card-actions">
@@ -1386,7 +1384,7 @@ function App() {
                         </div>
                         <div className="user-card-chips">
                           <Meta icon="schedule" tip={`Última sesión: ${new Date(u.lastLogin).toLocaleString()}`}>
-                            {new Date(u.lastLogin).toLocaleDateString()}
+                            {formatShortDate(new Date(u.lastLogin).toLocaleDateString('en-CA'))}
                           </Meta>
                           {u.email ? (
                             <Meta icon="mail" tip={u.email}><span className="chip-ellipsis">{u.email}</span></Meta>
@@ -1811,7 +1809,7 @@ function App() {
                             type="button"
                             className="archive-btn"
                             onClick={() => void (a.archived ? setActivityArchived(a.id, false) : updateActivityStatus(a.id, 'done'))}
-                            title="Devolver al tablero (columna Realizado)"
+                            title="Devolver al tablero (columna Hecho)"
                           >
                             <span className="material-symbols-rounded">unarchive</span>
                             Restaurar
