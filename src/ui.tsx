@@ -174,7 +174,7 @@ export function TaskCardBody({
           {onArchive && (
             <IconButton
               icon="inventory_2"
-              label="Archivar: sale del tablero y queda en el Historial"
+              label="Archivar"
               size={28}
               className="task-archive"
               draggable={false}

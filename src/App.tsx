@@ -31,7 +31,7 @@ import type { Activity, User, Team, PresenceEntry } from './db';
 // Using Material Symbols Rounded via Google Fonts, no Lucide React imports needed
 import './App.css';
 import { todayString, isOverdue as isOverdueOn } from './dates';
-import { Icon, IconButton, Avatar, Meta, MiniTaskCard } from './ui';
+import { Icon, IconButton, Avatar, Meta, MiniTaskCard, TaskCardBody } from './ui';
 import { isFilterActive, summarizeMatches, describeMatches } from './filters';
 import StatsPage from './StatsPage';
 
@@ -70,7 +70,7 @@ function App() {
   const [targetAssignee, setTargetAssignee] = useState<string>('');  // Admin filter
   const [viewingUserAsAdmin, setViewingUserAsAdmin] = useState<User | null>(null);
   const [overdueOnly, setOverdueOnly] = useState(false); // admin: also require "overdue"
-  const [teamsExpanded, setTeamsExpanded] = useState(false); // Equipos panel, only matters while a filter is active
+  const [teamsExpanded, setTeamsExpanded] = useState(true); // Equipos panel expanded/collapsed state
   const [activeStatusFilters, setActiveStatusFilters] = useState<Set<'todo' | 'doing' | 'done' | 'cancelled'>>(new Set());
   const [activeUserFilters, setActiveUserFilters] = useState<Set<string>>(new Set());
   const [isUsersPanelOpen, setIsUsersPanelOpen] = useState(false);
@@ -278,9 +278,9 @@ function App() {
   const taskFilter = { statuses: activeStatusFilters, overdueOnly, users: activeUserFilters };
   const filterActive = isFilterActive(taskFilter);
 
-  // Clearing the filter resets the Equipos panel to its normal, fully shown state.
+  // Activating a filter collapses the Equipos panel to a matching-teams strip; clearing resets it.
   useEffect(() => {
-    if (!filterActive) setTeamsExpanded(false);
+    setTeamsExpanded(!filterActive);
   }, [filterActive]);
 
   // Briefly plays the trash "burst" animation after a task is cancelled.
@@ -1047,7 +1047,7 @@ function App() {
 
       {!isAdmin && !viewingTeam && myTeams.length > 0 && (
         <div className="my-teams-row animate-fade-in">
-          <span className="my-teams-label">Mis equipos:</span>
+          <span className="my-teams-label" data-tip="Mis equipos"><Icon name="groups" size={20} /></span>
           {myTeams.map(t => (
             <button key={t.id} type="button" className="team-pill" onClick={() => handleSelectTeam(t)}>
               <span className="material-symbols-rounded" style={{ fontSize: '16px' }}>groups</span> {t.name}
@@ -1219,16 +1219,16 @@ function App() {
             </div>
           )}
 
-          {/* Teams management. While a filter is active it collapses to a strip that lists
-              only the teams with tasks matching the filter (expandable by hand). */}
+          {/* Teams management. Can be minimized at any time, and collapses automatically while a filter is active. */}
           {(() => {
             const teamRows = teams.map(t => {
               const summary = summarizeMatches(activities.filter(a => a.teamId === t.id), taskFilter, today);
               return { team: t, summary, matches: summary.matching > 0 };
             });
             const matchingTeams = teamRows.filter(r => r.matches);
+            const collapsedTeams = filterActive ? matchingTeams : teamRows;
 
-            if (filterActive && !teamsExpanded) {
+            if (!teamsExpanded) {
               return (
                 <div className="glass-panel teams-collapsed animate-fade-in">
                   <div className="teams-collapsed-head">
@@ -1236,19 +1236,23 @@ function App() {
                       <span className="material-symbols-rounded" style={{ fontSize: '22px', color: 'var(--color-secondary)' }}>groups</span>
                       <h2>Equipos</h2>
                       <span className="teams-collapsed-count">
-                        {teams.length === 0 ? 'sin equipos' : `${matchingTeams.length} de ${teams.length} coinciden con el filtro`}
+                        {teams.length === 0
+                          ? 'sin equipos'
+                          : filterActive
+                            ? `${matchingTeams.length} de ${teams.length} coinciden con el filtro`
+                            : `${teams.length} ${teams.length === 1 ? 'equipo' : 'equipos'}`}
                       </span>
                     </div>
-                    <button type="button" className="btn btn-secondary" style={{ width: 'auto', gap: '0.3rem' }} data-tip="Mostrar todos los equipos" onClick={() => setTeamsExpanded(true)}>
+                    <button type="button" className="btn btn-secondary" style={{ width: 'auto', gap: '0.3rem', marginLeft: 'auto' }} data-tip="Mostrar todos los equipos" onClick={() => setTeamsExpanded(true)}>
                       <Icon name="expand_more" size={18} /> Todos
                     </button>
                   </div>
                   {teams.length > 0 && (
-                    matchingTeams.length === 0 ? (
+                    collapsedTeams.length === 0 ? (
                       <p className="teams-collapsed-empty">Ningún equipo coincide con el filtro.</p>
                     ) : (
                       <div className="teams-collapsed-chips">
-                        {matchingTeams.map(({ team, summary }) => (
+                        {collapsedTeams.map(({ team, summary }) => (
                           <button
                             key={team.id}
                             type="button"
@@ -1275,12 +1279,7 @@ function App() {
                 <span className="material-symbols-rounded" style={{ fontSize: '24px', color: 'var(--color-secondary)' }}>groups</span>
                 <h2>Equipos</h2>
               </div>
-              <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
-                {filterActive && (
-                  <button type="button" className="btn btn-secondary" style={{ width: 'auto', gap: '0.3rem' }} data-tip="Minimizar la lista de equipos" onClick={() => setTeamsExpanded(false)}>
-                    <Icon name="expand_less" size={18} /> Minimizar
-                  </button>
-                )}
+              <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', marginLeft: 'auto' }}>
                 <button
                   type="button"
                   className="btn btn-primary"
@@ -1288,6 +1287,9 @@ function App() {
                   onClick={openCreateTeamModal}
                 >
                   <span className="material-symbols-rounded">add</span> Crear Equipo
+                </button>
+                <button type="button" className="btn btn-secondary" style={{ width: 'auto', gap: '0.3rem' }} data-tip="Minimizar la lista de equipos" onClick={() => setTeamsExpanded(false)}>
+                  <Icon name="expand_less" size={18} /> Minimizar
                 </button>
               </div>
             </div>
@@ -1506,7 +1508,7 @@ function App() {
           >
             <div className="column-header">
               <span className="column-title" style={{ color: 'var(--color-todo)' }}>
-                ● Por Realizar
+                <Icon name="assignment" size={20} /> Por hacer
               </span>
               <span className="column-count">{getCount('todo')}</span>
             </div>
@@ -1521,38 +1523,7 @@ function App() {
                   onDragEnd={handleDragEnd}
                   onClick={() => openEditModal(act)}
                 >
-                  <div className="task-header" style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', alignItems: 'stretch' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <h4 className="task-title">{act.title}</h4>
-                      <span className="material-symbols-rounded" style={{ fontSize: '16px', color: 'var(--text-muted)', flexShrink: 0 }}>edit</span>
-                    </div>
-                    <div style={{ display: 'flex', gap: '0.4rem' }}>
-                      <span className={`priority-badge prio-${act.priority || 'media'}`}>
-                        {act.priority || 'media'}
-                      </span>
-                      {isOverdue(act) && (
-                        <span className="overdue-badge" title={`Debía terminar el ${act.endDate}`}>Retrasada</span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="task-expand">
-                    <p className="task-desc">{act.description || 'Sin descripción.'}</p>
-                    {act.assignedBy && (
-                      <div className="task-assigned-by">
-                        <span>★ Asignada por: {act.assignedBy}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="task-footer">
-                    <div className="task-dates">
-                      <span>Inicio: {act.startDate}</span>
-                      <span>Fin: {act.endDate}</span>
-                    </div>
-                    <div className="task-owner">
-                      <span className="material-symbols-rounded" style={{ fontSize: '12px', display: 'inline-flex', alignItems: 'center', marginRight: '0.25rem' }}>person</span> {act.username}
-                    </div>
-                  </div>
+                  <TaskCardBody act={act} today={today} overdue={isOverdue(act)} />
                 </div>
               ))}
             </div>
@@ -1567,7 +1538,7 @@ function App() {
           >
             <div className="column-header">
               <span className="column-title" style={{ color: 'var(--color-doing)' }}>
-                ● En Realización
+                <Icon name="schedule" size={20} /> En curso
               </span>
               <span className="column-count">{getCount('doing')}</span>
             </div>
@@ -1582,44 +1553,7 @@ function App() {
                   onDragEnd={handleDragEnd}
                   onClick={() => openEditModal(act)}
                 >
-                  <div className="task-header" style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', alignItems: 'stretch' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <h4 className="task-title">{act.title}</h4>
-                      <span className="material-symbols-rounded" style={{ fontSize: '16px', color: 'var(--text-muted)', flexShrink: 0 }}>edit</span>
-                    </div>
-                    <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
-                      <span className={`priority-badge prio-${act.priority || 'media'}`}>
-                        {act.priority || 'media'}
-                      </span>
-                      {isOverdue(act) && (
-                        <span className="overdue-badge" title={`Debía terminar el ${act.endDate}`}>Retrasada</span>
-                      )}
-                      <span className="priority-badge" style={{ background: 'var(--color-primary-glow)', color: 'var(--color-doing)', fontWeight: '600' }}>
-                        {act.progress ?? 50}% avance
-                      </span>
-                    </div>
-                    <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', overflow: 'hidden', marginTop: '0.2rem' }}>
-                      <div style={{ width: `${act.progress ?? 50}%`, height: '100%', background: 'var(--color-doing)', transition: 'width 0.3s ease' }} />
-                    </div>
-                  </div>
-                  <div className="task-expand">
-                    <p className="task-desc">{act.description || 'Sin descripción.'}</p>
-                    {act.assignedBy && (
-                      <div className="task-assigned-by">
-                        <span>★ Asignada por: {act.assignedBy}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="task-footer">
-                    <div className="task-dates">
-                      <span>Inicio: {act.startDate}</span>
-                      <span>Fin: {act.endDate}</span>
-                    </div>
-                    <div className="task-owner">
-                      <span className="material-symbols-rounded" style={{ fontSize: '12px', display: 'inline-flex', alignItems: 'center', marginRight: '0.25rem' }}>person</span> {act.username}
-                    </div>
-                  </div>
+                  <TaskCardBody act={act} today={today} overdue={isOverdue(act)} showProgress />
                 </div>
               ))}
             </div>
@@ -1634,7 +1568,7 @@ function App() {
           >
             <div className="column-header">
               <span className="column-title" style={{ color: 'var(--color-done)' }}>
-                ● Realizado
+                <Icon name="check_circle" size={20} /> Hecho
               </span>
               <span className="column-count">{getCount('done')}</span>
             </div>
@@ -1649,45 +1583,7 @@ function App() {
                   onDragEnd={handleDragEnd}
                   onClick={() => openEditModal(act)}
                 >
-                  <div className="task-header" style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', alignItems: 'stretch' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <h4 className="task-title">{act.title}</h4>
-                      <span className="material-symbols-rounded" style={{ fontSize: '16px', color: 'var(--text-muted)', flexShrink: 0 }}>edit</span>
-                    </div>
-                    <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <span className={`priority-badge prio-${act.priority || 'media'}`}>
-                        {act.priority || 'media'}
-                      </span>
-                      <button
-                        type="button"
-                        className="archive-btn"
-                        draggable={false}
-                        onClick={(e) => { e.stopPropagation(); void setActivityArchived(act.id, true); }}
-                        title="Archivar: sale del tablero y queda en el Historial"
-                      >
-                        <span className="material-symbols-rounded">inventory_2</span>
-                        Archivar
-                      </button>
-                    </div>
-                  </div>
-                  <div className="task-expand">
-                    <p className="task-desc">{act.description || 'Sin descripción.'}</p>
-                    {act.assignedBy && (
-                      <div className="task-assigned-by">
-                        <span>★ Asignada por: {act.assignedBy}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="task-footer">
-                    <div className="task-dates">
-                      <span>Inicio: {act.startDate}</span>
-                      <span>Fin: {act.endDate}</span>
-                    </div>
-                    <div className="task-owner">
-                      <span className="material-symbols-rounded" style={{ fontSize: '12px', display: 'inline-flex', alignItems: 'center', marginRight: '0.25rem' }}>person</span> {act.username}
-                    </div>
-                  </div>
+                  <TaskCardBody act={act} today={today} overdue={false} onArchive={() => void setActivityArchived(act.id, true)} />
                 </div>
               ))}
             </div>

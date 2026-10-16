@@ -407,12 +407,35 @@ body.dark-theme .btn-primary {
 }
 
 .task-assigned-by {
-  font-size: 0.75rem;
-  color: var(--color-accent);
-  font-weight: 600;
   display: flex;
   align-items: center;
   gap: 0.25rem;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.task-badges {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.task-archive {
+  margin-left: auto;
+}
+
+.task-progress {
+  width: 100%;
+  height: 6px;
+  background: rgba(var(--overlay-rgb), 0.1);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.task-progress-fill {
+  height: 100%;
+  background: var(--color-doing);
+  transition: width 0.3s ease;
 }
 
 .task-footer {
@@ -435,26 +458,8 @@ body.dark-theme .btn-primary {
 .task-dates {
   display: flex;
   align-items: center;
-}
-
-.task-dates span:first-child::after {
-  content: '•';
-  margin: 0 0.35rem;
-  opacity: 0.4;
-}
-
-.task-owner {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  background: rgba(var(--overlay-rgb), 0.06);
-  padding: 0.2rem 0.5rem;
-  border-radius: 6px;
-  font-weight: 600;
-  max-width: 100px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.7rem;
 }
 
 /* Status Indicator Dot/Border */
@@ -517,18 +522,6 @@ body.dark-theme .btn-primary {
   .stat-card-overdue.has-overdue .stat-icon-box {
     animation: none;
   }
-}
-
-.overdue-badge {
-  flex-shrink: 0;
-  padding: 0.1rem 0.45rem;
-  border-radius: 999px;
-  font-size: 0.65rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  color: var(--color-danger);
-  background: rgba(var(--color-danger-rgb), 0.14);
-  border: 1px solid rgba(var(--color-danger-rgb), 0.4);
 }
 
 /* Modal Overlay */
@@ -1851,6 +1844,11 @@ body.dark-theme .prio-baja {
   justify-content: space-between;
   gap: 1rem;
   flex-wrap: wrap;
+}
+
+.admin-header .activity-map-title,
+.teams-collapsed-head .activity-map-title {
+  margin-bottom: 0;
 }
 
 .teams-collapsed-head h2 {
