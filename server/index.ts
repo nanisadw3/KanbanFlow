@@ -8,6 +8,8 @@ import path from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { scrypt as scryptCb, randomBytes, timingSafeEqual } from 'crypto';
 import { normalizeEmail } from './email.ts';
+import { mailerFromEnv, newTaskMessage, type Mailer } from './mailer.ts';
+import { localToday, runOverdueCheck } from './overdue.ts';
 
 interface Activity {
   id: string;
@@ -24,6 +26,7 @@ interface Activity {
   teamId?: string | null;
   completedAt?: string | null;
   archived?: boolean;
+  overdueNotifiedAt?: string | null;
 }
 
 interface User {
@@ -68,6 +71,7 @@ const __dirname = path.dirname(__filename);
 // overridden to a mounted volume (see Dockerfile/DB_PATH) so the database
 // survives container restarts and image rebuilds.
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../kanban.db');
+const mailer: Mailer = mailerFromEnv();
 
 let db: Database;
 
@@ -148,6 +152,12 @@ async function initSQLite() {
 
   try {
     await db.exec("ALTER TABLE users ADD COLUMN email TEXT;");
+  } catch {
+    // Column might already exist
+  }
+
+  try {
+    await db.exec("ALTER TABLE activities ADD COLUMN overdueNotifiedAt TEXT;");
   } catch {
     // Column might already exist
   }
@@ -258,6 +268,22 @@ async function broadcastPresence() {
   io.emit('presence:all', await getPresence());
 }
 
+// Fire-and-forget: a mail problem must never block or fail the task creation.
+async function notifyNewTask(task: Activity) {
+  if (!mailer.enabled || !task.assignedBy) return;
+  const assigner = await db.get<{ username: string; fullName: string | null; role: string | null }>(
+    'SELECT username, fullName, role FROM users WHERE username = ? COLLATE NOCASE', [task.assignedBy]
+  );
+  if (!assigner || !isAdminRow(assigner)) return;
+  if (assigner.username.toLowerCase() === task.username.toLowerCase()) return;
+  const assignee = await db.get<{ email: string | null }>(
+    'SELECT email FROM users WHERE username = ? COLLATE NOCASE', [task.username]
+  );
+  if (!assignee?.email) return;
+  const { subject, text } = newTaskMessage(task, assigner.fullName || assigner.username);
+  await mailer.send(assignee.email, subject, text);
+}
+
 // Socket Connection handling
 io.on('connection', async (socket) => {
   // Send initial data to newly connected client
@@ -292,6 +318,7 @@ io.on('connection', async (socket) => {
         completedAt,
       ]
     );
+    void notifyNewTask({ ...activityData, id, createdAt }).catch(err => console.error('[Mailer] notifyNewTask falló:', err));
     await broadcastActivities();
   });
 
@@ -302,7 +329,12 @@ io.on('connection', async (socket) => {
     else if (status === 'todo') nextProgress = 0;
     else if (status === 'doing' && typeof nextProgress !== 'number') nextProgress = 50;
 
-    await db.run('UPDATE activities SET status = ?, completedAt = ?, progress = ?, archived = 0 WHERE id = ?', [status, completedAt, nextProgress ?? null, id]);
+    await db.run(
+      `UPDATE activities SET status = ?, completedAt = ?, progress = ?, archived = 0,
+         overdueNotifiedAt = CASE WHEN status IN ('done','cancelled') AND ? NOT IN ('done','cancelled') THEN NULL ELSE overdueNotifiedAt END
+       WHERE id = ?`,
+      [status, completedAt, nextProgress ?? null, status, id]
+    );
     await broadcastActivities();
   });
 
@@ -314,7 +346,8 @@ io.on('connection', async (socket) => {
   socket.on('activity:update', async (updatedAct: Activity) => {
     const progress = updatedAct.status === 'done' ? 100 : updatedAct.status === 'doing' ? (typeof updatedAct.progress === 'number' ? updatedAct.progress : 50) : (typeof updatedAct.progress === 'number' ? updatedAct.progress : 0);
     await db.run(
-      `UPDATE activities SET title = ?, description = ?, startDate = ?, endDate = ?, status = ?, username = ?, assignedBy = ?, priority = ?, progress = ?, teamId = ?, completedAt = ?
+      `UPDATE activities SET title = ?, description = ?, startDate = ?, endDate = ?, status = ?, username = ?, assignedBy = ?, priority = ?, progress = ?, teamId = ?, completedAt = ?,
+         overdueNotifiedAt = CASE WHEN endDate != ? OR (status IN ('done','cancelled') AND ? NOT IN ('done','cancelled')) THEN NULL ELSE overdueNotifiedAt END
        WHERE id = ?`,
       [
         updatedAct.title,
@@ -328,6 +361,8 @@ io.on('connection', async (socket) => {
         progress,
         updatedAct.teamId || null,
         updatedAct.completedAt || null,
+        updatedAct.endDate,
+        updatedAct.status,
         updatedAct.id,
       ]
     );
@@ -516,6 +551,16 @@ setInterval(async () => {
   }
 }, 60000);
 
+async function checkOverdue() {
+  try {
+    const n = await runOverdueCheck(db, mailer, localToday());
+    if (n > 0) console.log(`[Kanban Server] ${n} aviso(s) de tarea retrasada enviado(s)`);
+  } catch (err) {
+    console.error('[Kanban Server] Falló la revisión de tareas retrasadas:', err);
+  }
+}
+setInterval(checkOverdue, 5 * 60 * 1000);
+
 // In the Docker image, the built frontend (`vite build`'s dist/) sits next to
 // this file and is served from the same origin/port as the API and sockets —
 // no separate nginx process needed. In local dev, dist/ doesn't exist (the
@@ -533,6 +578,7 @@ const PORT = process.env.PORT || 3001;
 initSQLite().then(() => {
   httpServer.listen(PORT, () => {
     console.log(`[Kanban Server] Running on http://localhost:${PORT} with SQLite & WebSockets`);
+    void checkOverdue();
   });
 }).catch((err) => {
   console.error('Failed to initialize SQLite database:', err);
