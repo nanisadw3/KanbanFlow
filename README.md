@@ -15,6 +15,7 @@ A real-time, multi-user Kanban board built with React + TypeScript + Node.js (SQ
 - **Overdue tasks, front and center** — the admin dashboard has a "Retrasadas" card that filters (combined with the status filters), people with late tasks are listed first with a red badge, each late task shows an alarm with "N d" (the long text, "venció hace N días", is in its tooltip), and the productivity page reports the count and the share of open tasks that are late per person and overall.
 - **Filters reach the teams** — the Equipos panel is expanded by default and can be minimized at any time with "Minimizar"; when an admin filter becomes active it collapses to a strip that lists only the teams with tasks matching it (e.g. "SEOSG · 1 retrasada"), and "Todos"/"Minimizar" toggle it (expanded, matching teams are highlighted and the rest dimmed).
 - **Icon-first interface** — buttons, card metadata, stats and form labels lead with icons; the text lives in tooltips (`data-tip`).
+- **Export to Excel** (download icon in the admin header and on the Productividad page) — one `.xlsx` with every user's **non-archived** tasks: a "Resumen" sheet (counts per user, overdue, % completed), a "Todas" sheet and one sheet per person, with Spanish headers, real dates, overdue highlighted, frozen header and filters.
 - **Auto-complete at 100%** — raising a task's progress to 100 moves it to "Hecho" by itself.
 - **Light/dark theme**, persisted in `localStorage`.
 
@@ -96,6 +97,7 @@ src/
   App.css         All styling — design tokens, theme, kanban/board/modal/trash-zone styles.
   db.ts           Socket.io client + types, subscriptions, and CRUD functions that emit to the server.
   StatsPage.tsx   Productividad page (routed via #stats); its numbers come from src/stats.ts.
+  export.ts / exportExcel.ts   Excel export: what gets exported (tested) and the .xlsx writer (exceljs, loaded on demand).
   main.tsx        Entry point.
 server/
   index.ts        Express + Socket.io + SQLite server: schema, socket handlers, and (in

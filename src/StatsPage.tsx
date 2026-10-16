@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { initDB, subscribeActivities, subscribeUsers } from './db';
-import type { Activity } from './db';
+import { initDB, subscribeActivities, subscribeUsers, subscribeTeams } from './db';
+import type { Activity, User, Team } from './db';
 import './App.css';
-import { Icon, IconButton, Avatar, Segmented, PriorityFlag, TaskDates } from './ui';
+import { Icon, IconButton, Avatar, Segmented, PriorityFlag, TaskDates, Toast } from './ui';
+import { useToast } from './useToast';
+import { exportAllTasks } from './exportExcel';
 import { todayString, isOverdue, daysOverdue } from './dates';
 import { isLive } from './archive';
 import {
@@ -49,7 +51,10 @@ const drillMeta = (key: DrillKey): { title: string; icon: string; color: string 
 
 function StatsPage({ onBack }: { onBack: () => void }) {
   const [activities, setActivities] = useState<Activity[]>([]);
-  const [usersList, setUsersList] = useState<{ username: string; fullName?: string }[]>([]);
+  const [usersList, setUsersList] = useState<User[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [isExporting, setIsExporting] = useState(false);
+  const { toast, show: showToast } = useToast();
   const [sortBy, setSortBy] = useState<SortKey>('rate');
   const [expanded, setExpanded] = useState<string | null>(null);
   const [period, setPeriod] = useState<Period>(() => loadPref('statsPeriod', PERIODS, 'all'));
@@ -77,9 +82,11 @@ function StatsPage({ onBack }: { onBack: () => void }) {
     const unsubUsers = subscribeUsers(users => {
       setUsersList(users.filter(u => u.username.toLowerCase() !== 'admin'));
     });
+    const unsubTeams = subscribeTeams(setTeams);
     return () => {
       unsubActivities();
       unsubUsers();
+      unsubTeams();
     };
   }, []);
 
@@ -139,6 +146,15 @@ function StatsPage({ onBack }: { onBack: () => void }) {
       : a.endDate.localeCompare(b.endDate));
   const displayName = (username: string) => usersList.find(u => u.username.toLowerCase() === username.toLowerCase())?.fullName || username;
 
+  // Every user's NON-archived tasks (independent of the period/scope filters) as an .xlsx.
+  const handleExportExcel = async () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    const result = await exportAllTasks({ activities, users: usersList, teams, today });
+    setIsExporting(false);
+    showToast(result.message, result.ok);
+  };
+
   const openBoard = (username: string) => { window.location.hash = `user-${encodeURIComponent(username)}`; };
   const openTask = (a: Activity) => { window.location.hash = a.teamId ? `team-${a.teamId}` : `user-${encodeURIComponent(a.username)}`; };
 
@@ -154,12 +170,15 @@ function StatsPage({ onBack }: { onBack: () => void }) {
             </p>
           </div>
         </div>
-        <IconButton
-          icon={theme === 'dark' ? 'light_mode' : 'dark_mode'}
-          label="Cambiar tema"
-          onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
-          size={40}
-        />
+        <div style={{ display: 'flex', gap: '0.6rem' }}>
+          <IconButton icon="download" label="Exportar a Excel" onClick={() => void handleExportExcel()} disabled={isExporting} size={40} />
+          <IconButton
+            icon={theme === 'dark' ? 'light_mode' : 'dark_mode'}
+            label="Cambiar tema"
+            onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+            size={40}
+          />
+        </div>
       </div>
 
       <div className="stats-filters">
@@ -486,6 +505,8 @@ function StatsPage({ onBack }: { onBack: () => void }) {
           </div>
         </section>
       )}
+
+      <Toast toast={toast} />
     </div>
   );
 }

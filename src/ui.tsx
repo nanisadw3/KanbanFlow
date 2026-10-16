@@ -1,4 +1,5 @@
 import type { CSSProperties, MouseEvent, ReactNode } from 'react';
+import type { ToastState } from './useToast';
 import type { Activity } from './db';
 import { daysOverdue, formatShortDate } from './dates';
 
@@ -228,6 +229,20 @@ export function MiniTaskCard({
       <div className="mini-card-meta">
         <TaskDates start={act.startDate} end={act.endDate} overdueDays={overdue ? daysOverdue(act.endDate, today) : undefined} />
       </div>
+    </div>
+  );
+}
+
+// Brief status message (e.g. "Archivo exportado"), announced to screen readers.
+export function Toast({ toast }: { toast: ToastState | null }) {
+  return (
+    <div className="toast-region" role="status" aria-live="polite">
+      {toast && (
+        <div className={`toast ${toast.ok ? 'is-ok' : 'is-error'}`}>
+          <Icon name={toast.ok ? 'check_circle' : 'error'} size={20} />
+          {toast.text}
+        </div>
+      )}
     </div>
   );
 }

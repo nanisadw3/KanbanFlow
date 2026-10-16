@@ -33,7 +33,9 @@ import './App.css';
 import { todayString, isOverdue as isOverdueOn, formatShortDate } from './dates';
 import { isLive, isDoneVisibleOnBoard as isDoneOnBoard, inArchivero, matchesTab, archiveTabCounts } from './archive';
 import type { ArchiveTab } from './archive';
-import { Icon, IconButton, Avatar, Meta, PriorityFlag, MiniTaskCard, TaskCardBody, FieldLabel, Segmented } from './ui';
+import { Icon, IconButton, Avatar, Meta, PriorityFlag, MiniTaskCard, TaskCardBody, FieldLabel, Segmented, Toast } from './ui';
+import { useToast } from './useToast';
+import { exportAllTasks } from './exportExcel';
 import { isFilterActive, summarizeMatches, describeMatches } from './filters';
 import StatsPage from './StatsPage';
 
@@ -125,6 +127,8 @@ function App() {
 
   // History of completed tasks
   const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const { toast, show: showToast } = useToast();
   const [archiveTab, setArchiveTab] = useState<ArchiveTab>('all');
 
   // Drag-to-trash cancel gesture: the trash zone stays hidden and only
@@ -157,6 +161,15 @@ function App() {
     message: '',
     onConfirm: () => {}
   });
+
+  // Admin: every user's NON-archived tasks to an .xlsx (Resumen + Todas + one sheet per person).
+  const handleExportExcel = async () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    const result = await exportAllTasks({ activities, users, teams, today });
+    setIsExporting(false);
+    showToast(result.message, result.ok);
+  };
 
   const showConfirm = (title: string, message: string, onConfirm: () => void) => {
     setConfirmConfig({
@@ -1044,6 +1057,7 @@ function App() {
               <IconButton icon="key" label="Cambiar mi contraseña" onClick={openPasswordModal} />
               <IconButton icon="forward_to_inbox" label="Correo de avisos" onClick={() => void openMailModal()} />
               <IconButton icon="person_add" label="Nuevo usuario" onClick={openCreateUserModal} />
+              <IconButton icon="download" label="Exportar a Excel" onClick={() => void handleExportExcel()} disabled={isExporting} />
             </>
           )}
           <button className="btn btn-primary" onClick={() => openCreateModal()} style={{ gap: '0.4rem', whiteSpace: 'nowrap' }}>
@@ -2247,6 +2261,8 @@ function App() {
           </div>
         </div>
       )}
+
+      <Toast toast={toast} />
 
       {/* Custom Confirm Modal */}
       {confirmConfig.isOpen && (

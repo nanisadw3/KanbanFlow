@@ -86,6 +86,12 @@ CSS custom properties (design tokens) drive both themes; dark is default. No har
 - Testing gotcha: a copy of `kanban.db` carries the real SMTP settings (and overdue stamps), so a test server started on a copy **will send real emails**. Delete the `smtp_*` rows from the copy (`delete from settings where key like 'smtp_%'`) and start with no `SMTP_*` env vars before testing.
 - Gotcha: `io.on('connection')` registers its socket handlers after awaiting the initial snapshots, so a script client that emits immediately on connect loses the event. Wait ~600 ms first when testing with a raw socket.io client.
 
+## Excel export
+
+- `src/export.ts` (`buildExportData`, `safeSheetName`; tested in `server/export.test.ts`) decides what is exported: every user's tasks that are **not archived** (any status — done and cancelled included), grouped per person, Spanish labels, overdue flag/days; one sheet per person that has tasks (names sanitized to Excel's rules: <= 31 chars, no `\ / ? * [ ] :`, unique) plus "Resumen" (all users, even with 0 tasks) and "Todas".
+- `src/exportExcel.ts` writes the workbook with **exceljs**, imported dynamically so its ~930 KB chunk only loads when someone exports (the main bundle stays small). Calendar days are written as UTC midnight and timestamps as local wall-clock time so Excel shows what the app showed. `exportAllTasks` is the single entry point used by both the admin header button and the Productividad page; feedback goes through `useToast`/`Toast`.
+- The Excel export ignores the Productividad period/scope filters on purpose (it is a full dump of live work, not a report of the current view). Only admins see the button.
+
 ## Google Calendar sync
 
 `syncWithGoogleCalendar` (~line 259) is optional and self-contained: if no `googleClientId` is set (stored in `localStorage`, entered via the sync modal), it runs a **simulated** sync (just a timeout + success message) — no real network calls. If a Client ID is provided, it uses Google Identity Services (`window.google.accounts.oauth2`, loaded via a `<script>` tag in `index.html`) to get an OAuth token, then POSTs each of the current view's `displayedActivities` to the Google Calendar API as events. This is entirely client-side; there's no server component and no token storage beyond the browser session.
