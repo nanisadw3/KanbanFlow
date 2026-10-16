@@ -52,3 +52,17 @@ test('formatShortDate: día y mes cortos; año solo si no es el actual', () => {
   assert.equal(formatShortDate('', 2026), '');
   assert.equal(formatShortDate('no-es-fecha', 2026), 'no-es-fecha');
 });
+
+test('isOverdue: una tarea archivada nunca está retrasada', () => {
+  assert.equal(isOverdue({ endDate: '2026-10-01', status: 'todo', archived: true }, '2026-10-16'), false);
+  assert.equal(isOverdue({ endDate: '2026-10-01', status: 'todo', archived: false }, '2026-10-16'), true);
+});
+
+test('countOpenAndOverdue ignora las archivadas', () => {
+  const acts = [
+    { endDate: '2026-10-01', status: 'todo', archived: true },
+    { endDate: '2026-10-01', status: 'doing' },
+    { endDate: '2026-12-01', status: 'todo' },
+  ];
+  assert.deepEqual(countOpenAndOverdue(acts, '2026-10-16'), { open: 2, overdue: 1 });
+});

@@ -6,6 +6,12 @@ export function localToday(now: Date = new Date()): string {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
+// Milliseconds until the next local midnight — the moment a task whose end date is "today"
+// becomes overdue. Recomputed each time (never a fixed 24h) so DST changes don't drift it.
+export function msUntilNextLocalMidnight(now: Date = new Date()): number {
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime() - now.getTime();
+}
+
 interface OverdueRow {
   id: string;
   title: string;
@@ -26,6 +32,7 @@ export async function runOverdueCheck(db: Database, mailer: Mailer, today: strin
        LEFT JOIN users u ON u.username = a.username COLLATE NOCASE
       WHERE a.endDate != '' AND a.endDate < ?
         AND a.status NOT IN ('done', 'cancelled')
+        AND a.archived = 0
         AND a.overdueNotifiedAt IS NULL`,
     [today]
   );
@@ -40,15 +47,26 @@ export async function runOverdueCheck(db: Database, mailer: Mailer, today: strin
   return sent;
 }
 
-// A pass can outlast the 5-minute interval (slow SMTP, many tasks); without a guard the
-// next tick would pick up rows the first pass hasn't stamped yet and send them twice.
+// Runs overdue passes without overlapping. A call that arrives while a pass is running
+// returns 0 immediately but asks for ONE more pass right after it, so a task created or
+// changed mid-pass is still notified now instead of at the next clock tick; no row is
+// stamped before its send succeeds, so a repeat can never double-send.
 export function createOverdueChecker(db: Database, mailer: Mailer | (() => Mailer), getToday: () => string = localToday) {
   let running = false;
+  let rerun = false;
   return async (): Promise<number> => {
-    if (running) return 0;
+    if (running) {
+      rerun = true;
+      return 0;
+    }
     running = true;
+    let total = 0;
     try {
-      return await runOverdueCheck(db, typeof mailer === 'function' ? mailer() : mailer, getToday());
+      do {
+        rerun = false;
+        total += await runOverdueCheck(db, typeof mailer === 'function' ? mailer() : mailer, getToday());
+      } while (rerun);
+      return total;
     } finally {
       running = false;
     }

@@ -4,6 +4,7 @@ import type { Activity } from './db';
 import './App.css';
 import { Icon, Meta } from './ui';
 import { todayString, countOpenAndOverdue, overdueRate } from './dates';
+import { isLive } from './archive';
 
 function StatsPage({ onBack }: { onBack: () => void }) {
   const [activities, setActivities] = useState<Activity[]>([]);
@@ -38,7 +39,7 @@ function StatsPage({ onBack }: { onBack: () => void }) {
   // Matches the admin dashboard's stat cards, which count personal (non-team)
   // activities only — team tasks are tracked separately per team, not folded
   // into an individual's completion rate here.
-  const personalActivities = activities.filter(a => !a.teamId);
+  const personalActivities = activities.filter(a => !a.teamId && isLive(a));
 
   const rows = usersList
     .map(u => {

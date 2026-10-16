@@ -14,6 +14,7 @@ interface FilterableTask {
   status: string;
   endDate: string;
   username: string;
+  archived?: boolean;
 }
 
 export const isFilterActive = (f: TaskFilter): boolean =>

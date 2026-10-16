@@ -1074,30 +1074,6 @@ body.dark-theme .btn-primary {
   margin-top: 0.25rem;
 }
 
-.archive-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  padding: 0.2rem 0.55rem;
-  border-radius: 999px;
-  border: 1px solid var(--border-color);
-  background: rgba(var(--overlay-rgb), 0.04);
-  color: var(--text-muted);
-  font-size: 0.72rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: var(--transition-smooth);
-}
-
-.archive-btn .material-symbols-rounded {
-  font-size: 15px;
-}
-
-.archive-btn:hover {
-  border-color: var(--color-done);
-  color: var(--color-done);
-}
-
 .history-row-meta {
   display: flex;
   align-items: center;
@@ -1109,20 +1085,6 @@ body.dark-theme .btn-primary {
   display: flex;
   gap: 0.4rem;
   margin-left: auto;
-}
-
-.archive-btn-danger:hover {
-  border-color: var(--color-danger);
-  color: var(--color-danger);
-}
-
-.archived-badge {
-  font-size: 0.68rem;
-  font-weight: 600;
-  padding: 0.15rem 0.5rem;
-  border-radius: 999px;
-  border: 1px solid var(--border-color);
-  color: var(--text-muted);
 }
 
 .user-status-columns {
@@ -2118,4 +2080,38 @@ body.dark-theme .prio-baja {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* Archivero */
+.archivero .segmented {
+  margin: 0.25rem 0 1rem;
+}
+
+.archivero .segmented {
+  flex-wrap: nowrap;
+  gap: 0.35rem;
+}
+
+.archivero .segmented-option {
+  padding: 0.5rem 0.25rem;
+  gap: 0.25rem;
+  font-size: 0.74rem;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.archivero .history-list {
+  overflow-x: hidden;
+}
+
+.archive-row-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.archive-row-info {
+  flex: 1;
+  min-width: 0;
 }

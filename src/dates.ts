@@ -9,11 +9,12 @@ export const todayString = (now: Date = new Date()): string => {
 interface DatedTask {
   endDate: string;
   status: string;
+  archived?: boolean;
 }
 
 // Overdue = end date strictly before today and the task still open (todo/doing).
 export const isOverdue = (a: DatedTask, today: string): boolean =>
-  !!a.endDate && a.endDate < today && a.status !== 'done' && a.status !== 'cancelled';
+  !a.archived && !!a.endDate && a.endDate < today && a.status !== 'done' && a.status !== 'cancelled';
 
 const dayNumber = (ymd: string): number => {
   const [y, m, d] = ymd.split('-').map(Number);
@@ -30,7 +31,7 @@ export const overdueLabel = (endDate: string, today: string): string => {
 };
 
 export const countOpenAndOverdue = (acts: DatedTask[], today: string) => {
-  const open = acts.filter(a => a.status === 'todo' || a.status === 'doing');
+  const open = acts.filter(a => !a.archived && (a.status === 'todo' || a.status === 'doing'));
   return { open: open.length, overdue: open.filter(a => isOverdue(a, today)).length };
 };
 

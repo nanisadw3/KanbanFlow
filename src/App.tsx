@@ -31,7 +31,9 @@ import type { Activity, User, Team, PresenceEntry } from './db';
 // Using Material Symbols Rounded via Google Fonts, no Lucide React imports needed
 import './App.css';
 import { todayString, isOverdue as isOverdueOn, formatShortDate } from './dates';
-import { Icon, IconButton, Avatar, Meta, MiniTaskCard, TaskCardBody, FieldLabel, Segmented } from './ui';
+import { isLive, isDoneVisibleOnBoard as isDoneOnBoard, inArchivero, matchesTab, archiveTabCounts } from './archive';
+import type { ArchiveTab } from './archive';
+import { Icon, IconButton, Avatar, Meta, PriorityFlag, MiniTaskCard, TaskCardBody, FieldLabel, Segmented } from './ui';
 import { isFilterActive, summarizeMatches, describeMatches } from './filters';
 import StatsPage from './StatsPage';
 
@@ -122,7 +124,8 @@ function App() {
   const isOverdue = (a: Activity) => isOverdueOn(a, today);
 
   // History of completed tasks
-  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+  const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false);
+  const [archiveTab, setArchiveTab] = useState<ArchiveTab>('all');
 
   // Drag-to-trash cancel gesture: the trash zone stays hidden and only
   // reveals itself (as a floating bar at the bottom) once a card has been
@@ -860,7 +863,7 @@ function App() {
 
   const myTeams = user ? teams.filter(t => t.memberUsernames.some(m => m.toLowerCase() === user.username.toLowerCase())) : [];
 
-  const displayedActivities = viewingTeam
+  const scopedActivities = viewingTeam
     ? activities.filter(a => a.teamId === viewingTeam.id)
     : isAdmin
       ? (viewingUserAsAdmin
@@ -868,6 +871,9 @@ function App() {
           : activities.filter(a => !a.teamId)
         )
       : activities.filter(a => a.username.toLowerCase() === user?.username.toLowerCase() && !a.teamId);
+  // Live views skip archived open tasks (they're shelved in the Archivero); the Archivero itself
+  // reads from scopedActivities.
+  const displayedActivities = scopedActivities.filter(isLive);
 
   // Who's online right now (presence entries seen in the last ~20s), and —
   // when viewing a team board — which of them are looking at this same
@@ -880,17 +886,14 @@ function App() {
     ? onlineNow.filter(p => p.context === `team-${viewingTeam.id}` && p.username.toLowerCase() !== user?.username.toLowerCase())
     : [];
 
-  // A completed task stays on the live board for 1 day, then quietly
-  // drops off it (it still exists — see the Historial modal). Tasks
-  // without a completedAt yet (older data) stay visible until they get one.
-  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-  const isDoneVisibleOnBoard = (a: Activity) =>
-    !a.archived && (!a.completedAt || now - new Date(a.completedAt).getTime() < ONE_DAY_MS);
+  // A completed task stays on the live board for 1 day, then drops off it (it still exists —
+  // see the Archivero). The rule lives in src/archive.ts, shared with the other views.
+  const isDoneVisibleOnBoard = (a: Activity) => isDoneOnBoard(a, now);
 
-  // Every completed task for the current context (personal/team/supervised
-  // user), newest first — this is the full Historial, not just the last day.
-  const historyActivities = displayedActivities
-    .filter(a => a.status === 'done')
+  // Everything in the Archivero for the current context (personal/team/supervised user),
+  // newest first: anything archived, every cancelled task, and completed tasks older than a day.
+  const archiveActivities = scopedActivities
+    .filter(a => inArchivero(a, now))
     .sort((a, b) => new Date(b.completedAt || b.createdAt).getTime() - new Date(a.completedAt || a.createdAt).getTime());
 
   // Count helper
@@ -936,7 +939,7 @@ function App() {
     if (!matchesUserFilter) return false;
 
     if (activeStatusFilters.size > 0 || overdueOnly) {
-      const userActs = activities.filter(a => a.username.toLowerCase() === username.toLowerCase() && !a.teamId);
+      const userActs = activities.filter(a => a.username.toLowerCase() === username.toLowerCase() && !a.teamId && isLive(a));
       const hasMatchingActivity = userActs.some(a =>
         (activeStatusFilters.size === 0 || activeStatusFilters.has(a.status)) && (!overdueOnly || isOverdue(a))
       );
@@ -1031,7 +1034,7 @@ function App() {
           )}
           <IconButton icon={theme === 'dark' ? 'light_mode' : 'dark_mode'} label="Cambiar tema" onClick={toggleTheme} />
           {(!isAdmin || viewingUserAsAdmin || viewingTeam) && (
-            <IconButton icon="history" label="Historial" onClick={() => setIsHistoryModalOpen(true)} />
+            <IconButton icon="folder_open" label="Archivero" onClick={() => setIsArchiveModalOpen(true)} />
           )}
           {(!isAdmin || viewingUserAsAdmin || viewingTeam) && (
             <IconButton icon="delete_sweep" label="Limpiar tablero" variant="danger" onClick={handleClearBoard} />
@@ -1104,7 +1107,7 @@ function App() {
                   onClick={() => toggleStatusFilter(cfg.key)}
                   aria-pressed={isActive}
                   data-tip={`Filtrar por: ${cfg.full}`}
-                  aria-label={`Filtrar por: ${cfg.full}, ${activities.filter(a => a.status === cfg.key && !a.teamId).length}`}
+                  aria-label={`Filtrar por: ${cfg.full}, ${activities.filter(a => a.status === cfg.key && !a.teamId && isLive(a)).length}`}
                 >
                   {isActive && (
                     <span className="stat-filter-check">
@@ -1115,7 +1118,7 @@ function App() {
                     <span className="material-symbols-rounded" style={{ fontSize: '26px' }}>{cfg.icon}</span>
                   </div>
                   <div className="stat-info">
-                    <span className="stat-value">{activities.filter(a => a.status === cfg.key && !a.teamId).length}</span>
+                    <span className="stat-value">{activities.filter(a => a.status === cfg.key && !a.teamId && isLive(a)).length}</span>
                     <span className="stat-label">{cfg.label}</span>
                   </div>
                 </button>
@@ -1226,7 +1229,7 @@ function App() {
           {/* Teams management. Can be minimized at any time, and collapses automatically while a filter is active. */}
           {(() => {
             const teamRows = teams.map(t => {
-              const summary = summarizeMatches(activities.filter(a => a.teamId === t.id), taskFilter, today);
+              const summary = summarizeMatches(activities.filter(a => a.teamId === t.id && isLive(a)), taskFilter, today);
               return { team: t, summary, matches: summary.matching > 0 };
             });
             const matchingTeams = teamRows.filter(r => r.matches);
@@ -1303,7 +1306,7 @@ function App() {
             ) : (
               <div className="teams-grid">
                 {teamRows.map(({ team: t, summary, matches }) => {
-                  const teamTaskCount = activities.filter(a => a.teamId === t.id).length;
+                  const teamTaskCount = activities.filter(a => a.teamId === t.id && isLive(a)).length;
                   return (
                     <div key={t.id} className={`team-card ${filterActive ? (matches ? 'is-match' : 'is-dimmed') : ''}`} onClick={() => handleSelectTeam(t)}>
                       <IconButton icon="delete" label="Eliminar equipo" variant="danger" size={30} className="team-card-delete" onClick={(e) => handleDeleteTeam(t.id, t.name, e)} />
@@ -1359,7 +1362,7 @@ function App() {
               .map(u => ({ u, overdueTotal: activities.filter(a => a.username.toLowerCase() === u.username.toLowerCase() && !a.teamId && isOverdue(a)).length }))
               .sort((a, b) => b.overdueTotal - a.overdueTotal) // people with late tasks first (stable otherwise)
               .map(({ u, overdueTotal }) => {
-              const userActs = activities.filter(a => a.username.toLowerCase() === u.username.toLowerCase() && !a.teamId && (!overdueOnly || isOverdue(a)));
+              const userActs = activities.filter(a => a.username.toLowerCase() === u.username.toLowerCase() && !a.teamId && isLive(a) && (!overdueOnly || isOverdue(a)));
               const userIsOnline = onlineNow.some(p => p.username.toLowerCase() === u.username.toLowerCase());
               const displayName = u.fullName || u.username;
               return (
@@ -1526,7 +1529,7 @@ function App() {
                   onDragEnd={handleDragEnd}
                   onClick={() => openEditModal(act)}
                 >
-                  <TaskCardBody act={act} today={today} overdue={isOverdue(act)} ownerOnline={isUserOnline(act.username)} />
+                  <TaskCardBody act={act} today={today} overdue={isOverdue(act)} ownerOnline={isUserOnline(act.username)} onArchive={() => void setActivityArchived(act.id, true)} />
                 </div>
               ))}
             </div>
@@ -1556,7 +1559,7 @@ function App() {
                   onDragEnd={handleDragEnd}
                   onClick={() => openEditModal(act)}
                 >
-                  <TaskCardBody act={act} today={today} overdue={isOverdue(act)} showProgress ownerOnline={isUserOnline(act.username)} />
+                  <TaskCardBody act={act} today={today} overdue={isOverdue(act)} showProgress ownerOnline={isUserOnline(act.username)} onArchive={() => void setActivityArchived(act.id, true)} />
                 </div>
               ))}
             </div>
@@ -1773,71 +1776,92 @@ function App() {
         </div>
       )}
 
-      {/* Historial: every completed task, not just the last day on the live board */}
-      {isHistoryModalOpen && (
-        <div className="modal-overlay" onClick={() => setIsHistoryModalOpen(false)}>
-          <div className="glass-panel modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span className="material-symbols-rounded" style={{ color: 'var(--color-done)' }}>history</span>
-                Historial de Completadas
-              </h3>
-              <button type="button" className="modal-close" onClick={() => setIsHistoryModalOpen(false)} aria-label="Cerrar">
-                <span className="material-symbols-rounded">close</span>
-              </button>
-            </div>
-
-            {historyActivities.length === 0 ? (
-              <p className="users-panel-empty">Todavía no hay tareas completadas en el historial.</p>
-            ) : (
-              <div className="history-list">
-                {historyActivities.map(a => (
-                  <div key={a.id} className="history-row">
-                    <div className="history-row-main">
-                      <span className="history-row-title">{a.title}</span>
-                      <span style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
-                        {a.archived && <span className="archived-badge">Archivada</span>}
-                        <span className={`priority-badge prio-${a.priority || 'media'}`}>{a.priority || 'media'}</span>
-                      </span>
-                    </div>
-                    {a.description && <p className="history-row-desc">{a.description}</p>}
-                    <div className="history-row-meta">
-                      {viewingTeam && <span className="history-row-owner">{a.username} · </span>}
-                      Completada el {new Date(a.completedAt || a.createdAt).toLocaleDateString()}
-                      <span className="history-row-actions">
-                        {(a.archived || !isDoneVisibleOnBoard(a)) && (
-                          <button
-                            type="button"
-                            className="archive-btn"
-                            onClick={() => void (a.archived ? setActivityArchived(a.id, false) : updateActivityStatus(a.id, 'done'))}
-                            title="Devolver al tablero (columna Hecho)"
-                          >
-                            <span className="material-symbols-rounded">unarchive</span>
-                            Restaurar
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          className="archive-btn archive-btn-danger"
-                          onClick={() => showConfirm(
-                            'Eliminar Tarea',
-                            `¿Eliminar "${a.title}" para siempre? Esta acción no se puede deshacer.`,
-                            () => void deleteActivity(a.id)
-                          )}
-                          title="Eliminar definitivamente"
-                        >
-                          <span className="material-symbols-rounded">delete</span>
-                          Eliminar
-                        </button>
-                      </span>
-                    </div>
-                  </div>
-                ))}
+      {/* Archivero: everything archived (any status), every cancelled task, and completed tasks older than a day */}
+      {isArchiveModalOpen && (() => {
+        const counts = archiveTabCounts(archiveActivities);
+        const rows = archiveActivities.filter(a => matchesTab(a, archiveTab));
+        const statusIcon: Record<Activity['status'], string> = { todo: 'assignment', doing: 'schedule', done: 'check_circle', cancelled: 'cancel' };
+        const statusColor: Record<Activity['status'], string> = { todo: '--color-todo', doing: '--color-doing', done: '--color-done', cancelled: '--color-danger' };
+        const statusName: Record<Activity['status'], string> = { todo: 'Por hacer', doing: 'En curso', done: 'Hecha', cancelled: 'Cancelada' };
+        // Cancelled tasks come back as "Por hacer"; archived ones leave the Archivero with the
+        // status they had; completed tasks that simply aged off are re-completed onto the board.
+        const restore = (a: Activity) => {
+          if (a.status === 'cancelled') void updateActivityStatus(a.id, 'todo');
+          else if (a.archived) void setActivityArchived(a.id, false);
+          else void updateActivityStatus(a.id, 'done');
+        };
+        return (
+          <div className="modal-overlay" onClick={() => setIsArchiveModalOpen(false)}>
+            <div className="glass-panel modal-content archivero" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Icon name="folder_open" style={{ color: 'var(--color-primary)' }} />
+                  Archivero
+                </h3>
+                <button type="button" className="modal-close" onClick={() => setIsArchiveModalOpen(false)} aria-label="Cerrar">
+                  <span className="material-symbols-rounded">close</span>
+                </button>
               </div>
-            )}
+
+              <Segmented
+                ariaLabel="Filtrar el archivero"
+                value={archiveTab}
+                onChange={setArchiveTab}
+                options={[
+                  { value: 'all', label: `Todas ${counts.all}`, icon: 'folder_open', color: '--color-primary' },
+                  { value: 'done', label: `Hechas ${counts.done}`, icon: 'check_circle', color: '--color-done' },
+                  { value: 'cancelled', label: `Canceladas ${counts.cancelled}`, icon: 'cancel', color: '--color-danger' },
+                  { value: 'archived', label: `Archivadas ${counts.archived}`, icon: 'inventory_2', color: '--color-secondary' },
+                ]}
+              />
+
+              {rows.length === 0 ? (
+                <p className="users-panel-empty">No hay tareas en esta sección del archivero.</p>
+              ) : (
+                <div className="history-list">
+                  {rows.map(a => (
+                    <div key={a.id} className="history-row">
+                      <div className="history-row-main">
+                        <span className="archive-row-title">
+                          <Icon name={statusIcon[a.status]} size={18} style={{ color: `var(${statusColor[a.status]})` }} />
+                          <span className="history-row-title">{a.title}</span>
+                        </span>
+                        <span style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
+                          {a.archived && <Meta icon="inventory_2" tip="Archivada">Archivada</Meta>}
+                          <PriorityFlag priority={a.priority} />
+                        </span>
+                      </div>
+                      {a.description && <p className="history-row-desc">{a.description}</p>}
+                      <div className="history-row-meta">
+                        <span className="archive-row-info">
+                          {(viewingTeam || (isAdmin && !viewingUserAsAdmin)) && <span className="history-row-owner">{a.username} · </span>}
+                          {a.status === 'done'
+                            ? `Completada el ${formatShortDate((a.completedAt || a.createdAt).substring(0, 10))}`
+                            : `${statusName[a.status]} · fin ${formatShortDate(a.endDate)}`}
+                        </span>
+                        <span className="history-row-actions">
+                          <IconButton icon="unarchive" label="Restaurar" variant="tonal" size={32} onClick={() => restore(a)} />
+                          <IconButton
+                            icon="delete"
+                            label="Eliminar definitivamente"
+                            variant="danger"
+                            size={32}
+                            onClick={() => showConfirm(
+                              'Eliminar Tarea',
+                              `¿Eliminar "${a.title}" para siempre? Esta acción no se puede deshacer.`,
+                              () => void deleteActivity(a.id)
+                            )}
+                          />
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Team create modal */}
       {isTeamModalOpen && (

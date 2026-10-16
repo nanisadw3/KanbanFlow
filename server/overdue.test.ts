@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import sqlite3 from 'sqlite3';
 import { open, type Database } from 'sqlite';
-import { localToday, runOverdueCheck, createOverdueChecker } from './overdue.ts';
+import { localToday, runOverdueCheck, createOverdueChecker, msUntilNextLocalMidnight } from './overdue.ts';
 import { createMailer } from './mailer.ts';
 
 async function makeDb(): Promise<Database> {
@@ -103,4 +103,35 @@ test('el revisor usa el mailer vigente en cada pasada (config cambiada desde el 
   current = mailer;
   assert.equal(await check(), 1);
   assert.equal(sent.length, 1);
+});
+
+test('una tarea archivada no genera aviso de retraso', async () => {
+  const db = await makeDb(); const { sent, mailer } = okMailer();
+  await addAct(db, '1', '2026-10-01', 'todo');
+  await db.run("UPDATE activities SET archived = 1 WHERE id = '1'");
+  assert.equal(await runOverdueCheck(db, mailer, '2026-10-16'), 0);
+  assert.equal(sent.length, 0);
+  await db.run("UPDATE activities SET archived = 0 WHERE id = '1'"); // restaurada: ahora sí
+  assert.equal(await runOverdueCheck(db, mailer, '2026-10-16'), 1);
+});
+
+test('una tarea que llega mientras corre una pasada se avisa en una repetición inmediata', async () => {
+  const db = await makeDb();
+  await addAct(db, '1', '2026-10-01', 'todo');
+  const sent: any[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>(r => { release = r; });
+  const slow = createMailer({ sendMail: async o => { await gate; sent.push(o); } }, 'k@x.com');
+  const check = createOverdueChecker(db, slow, () => '2026-10-16');
+  const first = check();                       // enviando la tarea 1
+  await addAct(db, '2', '2026-10-02', 'doing'); // llega otra vencida durante la pasada
+  assert.equal(await check(), 0);              // se solapa: no lanza otra pasada, pide repetir
+  release();
+  assert.equal(await first, 2);                // la repetición avisó la tarea 2 sin esperar al reloj
+  assert.equal(sent.length, 2);
+});
+
+test('msUntilNextLocalMidnight cuenta hasta la próxima medianoche local', () => {
+  assert.equal(msUntilNextLocalMidnight(new Date(2026, 9, 16, 23, 59, 30)), 30_000);
+  assert.equal(msUntilNextLocalMidnight(new Date(2026, 9, 16, 12, 0, 0)), 12 * 3600_000);
 });

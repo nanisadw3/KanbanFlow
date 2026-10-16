@@ -12,7 +12,7 @@ import { createMailer, mailerFromConfig, newTaskMessage, type Mailer } from './m
 import { ensureSettingsTable, getSetting, setSetting, resolveSmtpConfig, saveSmtpSettings, publicSmtpSettings } from './settings.ts';
 import { autoCompleteAtFull } from './autocomplete.ts';
 import { validateNewUser, createUser, touchLogin } from './users.ts';
-import { createOverdueChecker } from './overdue.ts';
+import { createOverdueChecker, msUntilNextLocalMidnight } from './overdue.ts';
 
 interface Activity {
   id: string;
@@ -339,6 +339,7 @@ io.on('connection', async (socket) => {
     );
     void notifyNewTask({ ...activityData, id, createdAt }).catch(err => console.error('[Mailer] notifyNewTask falló:', err));
     await broadcastActivities();
+    void checkOverdue(); // a task created already overdue is notified right away
   });
 
   socket.on('activity:updateStatus', async ({ id, status, progress }: { id: string; status: Activity['status']; progress?: number }) => {
@@ -355,11 +356,14 @@ io.on('connection', async (socket) => {
       [status, completedAt, nextProgress ?? null, status, id]
     );
     await broadcastActivities();
+    void checkOverdue();
   });
 
   socket.on('activity:setArchived', async ({ id, archived }: { id: string; archived: boolean }) => {
-    await db.run("UPDATE activities SET archived = ? WHERE id = ? AND status = 'done'", [archived ? 1 : 0, id]);
+    // Any status can be archived (the Archivero keeps the status it had); restoring brings it back.
+    await db.run('UPDATE activities SET archived = ? WHERE id = ?', [archived ? 1 : 0, id]);
     await broadcastActivities();
+    void checkOverdue(); // a restored, already-overdue task is notified right away
   });
 
   socket.on('activity:update', async (updatedAct: Activity) => {
@@ -394,6 +398,7 @@ io.on('connection', async (socket) => {
       ]
     );
     await broadcastActivities();
+    void checkOverdue(); // a new/changed end date that is already past is notified right away
   });
 
   socket.on('activity:delete', async (id: string) => {
@@ -634,7 +639,16 @@ async function checkOverdue() {
     console.error('[Kanban Server] Falló la revisión de tareas retrasadas:', err);
   }
 }
-setInterval(checkOverdue, 5 * 60 * 1000);
+setInterval(checkOverdue, 5 * 60 * 1000); // safety net; changes and midnight trigger passes directly
+
+// A task becomes overdue at local midnight (its end date is then in the past): fire a pass at
+// that exact moment instead of waiting for the next 5-minute tick. Recomputed every time.
+function scheduleMidnightCheck() {
+  setTimeout(() => {
+    void checkOverdue();
+    scheduleMidnightCheck();
+  }, msUntilNextLocalMidnight() + 2000);
+}
 
 // In the Docker image, the built frontend (`vite build`'s dist/) sits next to
 // this file and is served from the same origin/port as the API and sockets —
@@ -654,6 +668,7 @@ initSQLite().then(() => {
   httpServer.listen(PORT, () => {
     console.log(`[Kanban Server] Running on http://localhost:${PORT} with SQLite & WebSockets`);
     void checkOverdue();
+    scheduleMidnightCheck();
   });
 }).catch((err) => {
   console.error('Failed to initialize SQLite database:', err);
