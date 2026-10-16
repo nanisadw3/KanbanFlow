@@ -2105,3 +2105,6 @@ body.dark-theme .prio-baja {
   background: rgba(var(--color-danger-rgb), 0.18);
   color: var(--color-danger);
 }
+
+/* Modal footer: push an icon button (e.g. delete) to the left edge */
+.modal-footer .push-left { margin-right: auto; }

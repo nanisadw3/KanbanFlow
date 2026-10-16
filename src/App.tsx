@@ -31,7 +31,7 @@ import type { Activity, User, Team, PresenceEntry } from './db';
 // Using Material Symbols Rounded via Google Fonts, no Lucide React imports needed
 import './App.css';
 import { todayString, isOverdue as isOverdueOn } from './dates';
-import { Icon, IconButton, Avatar, Meta, MiniTaskCard, TaskCardBody } from './ui';
+import { Icon, IconButton, Avatar, Meta, MiniTaskCard, TaskCardBody, FieldLabel, Segmented } from './ui';
 import { isFilterActive, summarizeMatches, describeMatches } from './filters';
 import StatsPage from './StatsPage';
 
@@ -954,7 +954,7 @@ function App() {
 
           <form onSubmit={handleLogin}>
             <div className="form-group">
-              <label className="form-label">Nombre de Usuario</label>
+              <FieldLabel icon="badge">Nombre de Usuario</FieldLabel>
               <input
                 type="text"
                 className="form-input"
@@ -968,7 +968,7 @@ function App() {
             <div className={`auth-expandable-field ${showPassword ? 'is-expanded' : ''}`}>
               <div className="auth-expandable-content">
                 <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label">Contraseña de Admin</label>
+                  <FieldLabel icon="lock">Contraseña de Admin</FieldLabel>
                   <div style={{ position: 'relative' }}>
                     <input
                       type="password"
@@ -1615,7 +1615,8 @@ function App() {
         <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
           <div className="glass-panel modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3 className="modal-title">
+              <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Icon name={modalMode === 'create' ? 'add_task' : 'edit_note'} />
                 {modalMode === 'create' ? 'Nueva Actividad' : 'Editar Actividad'}
               </h3>
               <button type="button" className="modal-close" onClick={() => setIsModalOpen(false)} aria-label="Cerrar">
@@ -1626,7 +1627,7 @@ function App() {
             <form onSubmit={handleSaveActivity}>
               {!viewingUserAsAdmin && (isAdmin || viewingTeam) && (
                 <div className="form-group">
-                  <label className="form-label">Asignar A</label>
+                  <FieldLabel icon="person">Asignar A</FieldLabel>
                   <select
                     className="form-input"
                     value={targetAssignee}
@@ -1642,7 +1643,7 @@ function App() {
               )}
 
               <div className="form-group">
-                <label className="form-label">Título</label>
+                <FieldLabel icon="title">Título</FieldLabel>
                 <input
                   type="text"
                   className="form-input"
@@ -1654,7 +1655,7 @@ function App() {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Descripción</label>
+                <FieldLabel icon="notes">Descripción</FieldLabel>
                 <textarea
                   className="form-input"
                   style={{ minHeight: '100px', resize: 'vertical' }}
@@ -1666,7 +1667,7 @@ function App() {
 
               <div className="date-row">
                 <div className="form-group">
-                  <label className="form-label">Fecha Inicio</label>
+                  <FieldLabel icon="event">Fecha Inicio</FieldLabel>
                   <input
                     type="date"
                     className="form-input"
@@ -1676,7 +1677,7 @@ function App() {
                   />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Fecha Fin</label>
+                  <FieldLabel icon="event_available">Fecha Fin</FieldLabel>
                   <input
                     type="date"
                     className="form-input"
@@ -1688,22 +1689,23 @@ function App() {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Estado</label>
-                <select
-                  className="form-input"
-                  value={status}
-                  onChange={(e) => setStatus(e.target.value as any)}
-                >
-                  <option value="todo">Por Realizar</option>
-                  <option value="doing">En Realización</option>
-                  <option value="done">Realizado</option>
-                </select>
+                <FieldLabel icon="flag_circle">Estado</FieldLabel>
+                <Segmented
+                  ariaLabel="Estado"
+                  value={status as 'todo' | 'doing' | 'done'}
+                  onChange={(v) => setStatus(v)}
+                  options={[
+                    { value: 'todo', label: 'Por hacer', icon: 'assignment', color: '--color-todo' },
+                    { value: 'doing', label: 'En curso', icon: 'schedule', color: '--color-doing' },
+                    { value: 'done', label: 'Hecho', icon: 'check_circle', color: '--color-done' },
+                  ]}
+                />
               </div>
 
               {status === 'doing' && (
                 <div className="form-group animate-fade-in">
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <label className="form-label">Porcentaje de Avance</label>
+                    <FieldLabel icon="donut_small">Porcentaje de Avance</FieldLabel>
                     <span style={{ fontSize: '0.9rem', fontWeight: '700', color: 'var(--color-doing)' }}>
                       {progress}%
                     </span>
@@ -1736,34 +1738,31 @@ function App() {
               )}
 
               <div className="form-group">
-                <label className="form-label">Prioridad</label>
-                <select
-                  className="form-input"
+                <FieldLabel icon="flag">Prioridad</FieldLabel>
+                <Segmented
+                  ariaLabel="Prioridad"
                   value={priority}
-                  onChange={(e) => setPriority(e.target.value as any)}
-                >
-                  <option value="alta">Alta 🔴</option>
-                  <option value="media">Media 🟡</option>
-                  <option value="baja">Baja 🟢</option>
-                </select>
+                  onChange={(v) => setPriority(v)}
+                  options={[
+                    { value: 'alta', label: 'Alta', icon: 'flag', color: '--color-danger' },
+                    { value: 'media', label: 'Media', icon: 'flag', color: '--color-todo' },
+                    { value: 'baja', label: 'Baja', icon: 'flag', color: '--color-done' },
+                  ]}
+                />
               </div>
 
               <div className="modal-footer">
                 {modalMode === 'edit' && selectedActivity && (
-                  <button
-                    type="button"
-                    className="btn btn-danger"
+                  <IconButton
+                    icon="delete"
+                    label="Eliminar actividad"
+                    variant="danger"
                     onClick={() => handleDeleteActivity(selectedActivity.id)}
-                    style={{ marginRight: 'auto', width: 'auto', gap: '0.3rem' }}
-                  >
-                    <span className="material-symbols-rounded">delete</span> Eliminar
-                  </button>
+                    className="push-left"
+                  />
                 )}
-                <button type="button" className="btn btn-secondary" onClick={() => setIsModalOpen(false)} style={{ width: 'auto' }}>
-                  Cancelar
-                </button>
-                <button type="submit" className="btn btn-primary" style={{ width: 'auto' }}>
-                  Guardar
+                <button type="submit" className="btn btn-primary" style={{ width: 'auto', gap: '0.3rem' }}>
+                  <Icon name="check" /> Guardar
                 </button>
               </div>
             </form>
@@ -1842,14 +1841,16 @@ function App() {
         <div className="modal-overlay" onClick={() => setIsTeamModalOpen(false)}>
           <div className="glass-panel modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3 className="modal-title">Crear Equipo</h3>
+              <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Icon name="group_add" /> Crear Equipo
+              </h3>
               <button type="button" className="modal-close" onClick={() => setIsTeamModalOpen(false)} aria-label="Cerrar">
                 <span className="material-symbols-rounded">close</span>
               </button>
             </div>
             <form onSubmit={handleSaveTeam}>
               <div className="form-group">
-                <label className="form-label">Nombre del Equipo</label>
+                <FieldLabel icon="groups">Nombre del Equipo</FieldLabel>
                 <input
                   type="text"
                   className="form-input"
@@ -1860,7 +1861,7 @@ function App() {
                 />
               </div>
               <div className="form-group">
-                <label className="form-label">Miembros ({teamMemberSelection.size} seleccionados)</label>
+                <FieldLabel icon="group">Miembros ({teamMemberSelection.size} seleccionados)</FieldLabel>
                 {(() => {
                   const nonAdminUsers = users.filter(u => u.username.toLowerCase() !== 'admin');
                   const query = teamMemberSearch.trim().toLowerCase();
@@ -1915,9 +1916,6 @@ function App() {
                 })()}
               </div>
               <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setIsTeamModalOpen(false)} style={{ width: 'auto' }}>
-                  Cancelar
-                </button>
                 <button type="submit" className="btn btn-primary" style={{ width: 'auto' }} disabled={!teamNameInput.trim() || teamMemberSelection.size === 0}>
                   Crear Equipo
                 </button>
@@ -1950,7 +1948,7 @@ function App() {
                 </p>
               )}
               <div className="form-group">
-                <label className="form-label">Correo electrónico</label>
+                <FieldLabel icon="mail">Correo electrónico</FieldLabel>
                 <input
                   type="email"
                   className="form-input"
@@ -1986,7 +1984,7 @@ function App() {
 
             <form onSubmit={handleSaveNewUser} style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div className="form-group">
-                <label className="form-label">Nombre de Usuario (Username)</label>
+                <FieldLabel icon="badge">Nombre de Usuario (Username)</FieldLabel>
                 <input
                   type="text"
                   className="form-input"
@@ -1998,7 +1996,7 @@ function App() {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Nombre y Apellido</label>
+                <FieldLabel icon="person">Nombre y Apellido</FieldLabel>
                 <input
                   type="text"
                   className="form-input"
@@ -2010,7 +2008,7 @@ function App() {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Correo electrónico</label>
+                <FieldLabel icon="mail">Correo electrónico</FieldLabel>
                 <input
                   type="email"
                   className="form-input"
@@ -2022,7 +2020,7 @@ function App() {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Tipo de Usuario</label>
+                <FieldLabel icon="shield_person">Tipo de Usuario</FieldLabel>
                 <select
                   className="form-input"
                   value={newUserRole}
@@ -2035,7 +2033,7 @@ function App() {
 
               {newUserRole === 'admin' && (
                 <div className="form-group">
-                  <label className="form-label">Contraseña del Administrador</label>
+                  <FieldLabel icon="lock">Contraseña del Administrador</FieldLabel>
                   <input
                     type="password"
                     className="form-input"
@@ -2049,7 +2047,7 @@ function App() {
               )}
 
               <div className="form-group">
-                <label className="form-label">Tu contraseña de administrador</label>
+                <FieldLabel icon="admin_panel_settings">Tu contraseña de administrador</FieldLabel>
                 <input
                   type="password"
                   className="form-input"
@@ -2066,9 +2064,6 @@ function App() {
               )}
 
               <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setIsCreateUserModalOpen(false)} style={{ width: 'auto' }}>
-                  Cancelar
-                </button>
                 <button type="submit" className="btn btn-primary" style={{ width: 'auto' }}>
                   Crear Usuario
                 </button>
@@ -2094,7 +2089,7 @@ function App() {
 
             <form onSubmit={handleChangePassword} style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div className="form-group">
-                <label className="form-label">Contraseña actual</label>
+                <FieldLabel icon="lock">Contraseña actual</FieldLabel>
                 <input
                   type="password"
                   className="form-input"
@@ -2106,7 +2101,7 @@ function App() {
                 />
               </div>
               <div className="form-group">
-                <label className="form-label">Nueva contraseña</label>
+                <FieldLabel icon="lock_reset">Nueva contraseña</FieldLabel>
                 <input
                   type="password"
                   className="form-input"
@@ -2118,7 +2113,7 @@ function App() {
                 />
               </div>
               <div className="form-group">
-                <label className="form-label">Confirmar nueva contraseña</label>
+                <FieldLabel icon="lock_reset">Confirmar nueva contraseña</FieldLabel>
                 <input
                   type="password"
                   className="form-input"
@@ -2135,9 +2130,6 @@ function App() {
               )}
 
               <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setIsPasswordModalOpen(false)} style={{ width: 'auto' }}>
-                  Cancelar
-                </button>
                 <button type="submit" className="btn btn-primary" style={{ width: 'auto' }} disabled={passwordFormSuccess}>
                   Guardar contraseña
                 </button>
@@ -2167,20 +2159,20 @@ function App() {
               </p>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 110px', gap: '0.75rem' }}>
                 <div className="form-group">
-                  <label className="form-label">Servidor SMTP</label>
+                  <FieldLabel icon="dns">Servidor SMTP</FieldLabel>
                   <input type="text" className="form-input" placeholder="smtp.gmail.com" value={mailHost} onChange={(e) => setMailHost(e.target.value)} />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Puerto</label>
+                  <FieldLabel icon="tag">Puerto</FieldLabel>
                   <input type="number" className="form-input" min={1} max={65535} value={mailPort} onChange={(e) => setMailPort(e.target.value)} />
                 </div>
               </div>
               <div className="form-group">
-                <label className="form-label">Usuario (cuenta de inicio de sesión)</label>
+                <FieldLabel icon="account_circle">Usuario (cuenta de inicio de sesión)</FieldLabel>
                 <input type="text" className="form-input" placeholder="tucuenta@gmail.com" autoComplete="off" value={mailUser} onChange={(e) => setMailUser(e.target.value)} />
               </div>
               <div className="form-group">
-                <label className="form-label">Contraseña de aplicación</label>
+                <FieldLabel icon="key">Contraseña de aplicación</FieldLabel>
                 <input
                   type="password"
                   className="form-input"
@@ -2191,11 +2183,11 @@ function App() {
                 />
               </div>
               <div className="form-group">
-                <label className="form-label">Remitente (De)</label>
+                <FieldLabel icon="forward_to_inbox">Remitente (De)</FieldLabel>
                 <input type="text" className="form-input" placeholder="KanbanFlow <avisos@tudominio.com>" value={mailFrom} onChange={(e) => setMailFrom(e.target.value)} />
               </div>
               <div className="form-group">
-                <label className="form-label">Tu contraseña de administrador</label>
+                <FieldLabel icon="admin_panel_settings">Tu contraseña de administrador</FieldLabel>
                 <input
                   type="password"
                   className="form-input"
@@ -2234,8 +2226,8 @@ function App() {
         <div className="modal-overlay" onClick={() => setConfirmConfig(prev => ({ ...prev, isOpen: false }))}>
           <div className="glass-panel modal-content animate-scale-in" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '400px' }}>
             <div className="modal-header">
-              <h3 className="modal-title" style={{ color: '#d93025', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span className="material-symbols-rounded">warning</span> {confirmConfig.title}
+              <h3 className="modal-title" style={{ color: 'var(--color-danger)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Icon name="help" /> {confirmConfig.title}
               </h3>
               <button type="button" className="modal-close" onClick={() => setConfirmConfig(prev => ({ ...prev, isOpen: false }))} aria-label="Cerrar">
                 <span className="material-symbols-rounded">close</span>
