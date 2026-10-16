@@ -37,3 +37,11 @@ export const countOpenAndOverdue = (acts: DatedTask[], today: string) => {
 // Share of the still-open work that is late (not of all tasks).
 export const overdueRate = (c: { open: number; overdue: number }): number =>
   c.open === 0 ? 0 : Math.round((c.overdue / c.open) * 100);
+
+const MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+
+export const formatShortDate = (ymd: string, currentYear: number = new Date().getFullYear()): string => {
+  const [y, m, d] = ymd.split('-').map(Number);
+  if (!y || !m || !d || m < 1 || m > 12) return ymd;
+  return `${d} ${MONTHS[m - 1]}${y === currentYear ? '' : ` ${y}`}`;
+};

@@ -1932,3 +1932,197 @@ body.dark-theme .prio-baja {
 .team-card.is-dimmed {
   opacity: 0.45;
 }
+
+/* ───────── Icon-first foundation ───────── */
+
+[data-tip] {
+  position: relative;
+}
+
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translate(-50%, 4px);
+  padding: 0.3rem 0.55rem;
+  border-radius: 6px;
+  background: var(--text-main);
+  color: var(--bg-main);
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  text-transform: none;
+  letter-spacing: 0;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 80;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  transition-delay: 0.35s;
+}
+
+/* No hover on touch screens: tooltips would never close */
+@media (hover: none) {
+  [data-tip]::after {
+    display: none;
+  }
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--ib, 36px);
+  height: var(--ib, 36px);
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  cursor: pointer;
+  flex-shrink: 0;
+  background: rgba(var(--overlay-rgb), 0.06);
+  color: var(--text-muted);
+  transition: var(--transition-smooth);
+}
+
+.icon-btn:hover {
+  background: rgba(var(--overlay-rgb), 0.12);
+  color: var(--text-main);
+}
+
+.icon-btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.icon-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.icon-btn-tonal {
+  background: rgba(var(--color-primary-rgb), 0.14);
+  color: var(--color-primary);
+}
+
+.icon-btn-tonal:hover {
+  background: rgba(var(--color-primary-rgb), 0.26);
+  color: var(--color-primary);
+}
+
+.icon-btn-danger {
+  background: rgba(var(--color-danger-rgb), 0.12);
+  color: var(--color-danger);
+}
+
+.icon-btn-danger:hover {
+  background: rgba(var(--color-danger-rgb), 0.24);
+  color: var(--color-danger);
+}
+
+.avatar {
+  position: relative;
+  width: var(--sz, 36px);
+  height: var(--sz, 36px);
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: calc(var(--sz, 36px) * 0.38);
+  font-weight: 700;
+  font-family: var(--font-display);
+  color: var(--av, var(--color-primary));
+  background: rgba(var(--av-rgb, var(--color-primary-rgb)), 0.18);
+}
+
+.avatar-online {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--color-done);
+  border: 2px solid var(--bg-main);
+}
+
+.prio-flag {
+  display: inline-flex;
+  align-items: center;
+}
+
+.prio-flag-alta { color: var(--color-danger); }
+.prio-flag-media { color: var(--color-todo); }
+.prio-flag-baja { color: var(--color-done); }
+
+.meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.meta-danger {
+  color: var(--color-danger);
+  font-weight: 700;
+}
+
+.field-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.segmented {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.segmented-option {
+  flex: 1 1 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.6rem 0.5rem;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-input);
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+
+.segmented-option:hover {
+  border-color: var(--border-color-hover);
+}
+
+.segmented-option.is-selected {
+  color: var(--seg);
+  border-color: var(--seg);
+  background: rgba(var(--seg-rgb), 0.14);
+}
+
+.segmented-option:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* The "Canceladas" stat icon had no rule and fell back to black on the dark theme */
+.stat-icon-cancelled {
+  background: rgba(var(--color-danger-rgb), 0.18);
+  color: var(--color-danger);
+}
