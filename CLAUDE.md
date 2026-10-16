@@ -71,7 +71,7 @@ Task cards show only title + dates by default; description and "assigned by" inf
 
 ## Theming
 
-CSS custom properties (design tokens) drive both themes; dark is default. No hardcoded colors — if you see a raw hex/rgb value being added to `App.css`, that's very likely a bug waiting to happen on theme switch (this happened before: `.task-title { color: #fff }` was invisible on the light theme's white cards, and dark-only `rgba(255,255,255,...)` overlays were used regardless of theme before an `--overlay-rgb` token was introduced to flip per-theme). Light mode is meant to be light-*but-grayish*, not stark white — that was an explicit user preference, not a default Vite/React look.
+CSS custom properties (design tokens) drive both themes; dark is default. No hardcoded colors — if you see a raw hex/rgb value being added to `App.css`, that's very likely a bug waiting to happen on theme switch (this happened before: `.task-title { color: #fff }` was invisible on the light theme's white cards, and dark-only `rgba(255,255,255,...)` overlays were used regardless of theme before an `--overlay-rgb` token was introduced to flip per-theme). Light mode is a "soft gray" palette (page `#d6d9de`, cards ~`#e1e4e9`, no white surfaces) chosen to be easy on the eyes — that was an explicit user preference, not a default Vite/React look. Every light text/status color was checked for WCAG AA (>= 4.5:1) against both the page and the card tint; if you change a light token, re-check contrast (the status/danger hues were darkened for this). Productividad (`src/StatsPage.tsx`, logic in `src/stats.ts`, tests in `server/stats.test.ts`) keeps red exclusively for overdue; cancelled is gray there.
 
 ## Email notifications and overdue tasks
 

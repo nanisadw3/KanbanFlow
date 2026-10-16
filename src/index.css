@@ -4,45 +4,46 @@
   --font-sans: 'Plus Jakarta Sans', sans-serif;
   --font-display: 'Outfit', sans-serif;
 
-  /* Light Mode Colors (Default) — neutral grays, muted, never stark white */
-  --bg-main: #e8e9eb;
-  --bg-card: rgba(248, 248, 249, 0.72);
-  --bg-card-hover: rgba(248, 248, 249, 0.9);
-  --bg-column: rgba(255, 255, 255, 0.35);
-  --bg-input: #eeeff1;
+  /* Light Mode Colors (Default) — "soft gray": mid-tone grays with no white surfaces, tuned to be
+     easy on the eyes. Every text color keeps WCAG AA (>= 4.5:1) on both the page and the cards. */
+  --bg-main: #d6d9de;
+  --bg-card: rgba(231, 233, 237, 0.8);
+  --bg-card-hover: rgba(236, 238, 242, 0.92);
+  --bg-column: rgba(255, 255, 255, 0.16);
+  --bg-input: #e3e5e9;
 
-  --border-color: #d4d5d8;
-  --border-color-hover: #adafb4;
+  --border-color: #bfc3cb;
+  --border-color-hover: #9aa0aa;
 
-  --color-primary: #3b5bdb;
-  --color-primary-rgb: 59, 91, 219;
-  --color-primary-glow: rgba(59, 91, 219, 0.2);
+  --color-primary: #2f4ec4;
+  --color-primary-rgb: 47, 78, 196;
+  --color-primary-glow: rgba(47, 78, 196, 0.2);
 
-  --color-secondary: #6b7280;
-  --color-secondary-rgb: 107, 114, 128;
-  --color-secondary-glow: rgba(107, 114, 128, 0.16);
+  --color-secondary: #555b66;
+  --color-secondary-rgb: 85, 91, 102;
+  --color-secondary-glow: rgba(85, 91, 102, 0.16);
 
-  --color-accent: #4b5563;
-  --color-accent-rgb: 75, 85, 99;
-  --color-accent-glow: rgba(75, 85, 99, 0.14);
+  --color-accent: #434a55;
+  --color-accent-rgb: 67, 74, 85;
+  --color-accent-glow: rgba(67, 74, 85, 0.14);
 
-  --color-todo: #b45309;
-  --color-todo-rgb: 180, 83, 9;
-  --color-doing: #3b5bdb;
-  --color-doing-rgb: 59, 91, 219;
-  --color-done: #15803d;
-  --color-done-rgb: 21, 128, 61;
+  --color-todo: #9a4306;
+  --color-todo-rgb: 154, 67, 6;
+  --color-doing: #2f4ec4;
+  --color-doing-rgb: 47, 78, 196;
+  --color-done: #11692f;
+  --color-done-rgb: 17, 105, 47;
 
-  --color-danger: #d93025;
-  --color-danger-rgb: 217, 48, 37;
+  --color-danger: #b0211a;
+  --color-danger-rgb: 176, 33, 26;
 
   /* Chart fills — same status hues, validated against each surface (see dataviz skill) */
   --chart-todo: #b45309;
   --chart-doing: #3b5bdb;
   --chart-done: #15803d;
 
-  --text-main: #24262b;
-  --text-muted: #64676d;
+  --text-main: #1f2228;
+  --text-muted: #505560;
   --text-inverse: #ffffff;
 
   /* Neutral tint used for overlays/chips so they adapt per theme */
@@ -52,7 +53,7 @@
   --shadow-sm: 0 1px 2px 0 rgba(60,64,67,0.2), 0 1px 3px 1px rgba(60,64,67,0.1);
   --shadow-md: 0 4px 16px rgba(60, 64, 67, 0.1);
   --shadow-lg: 0 16px 32px rgba(60, 64, 67, 0.14);
-  --shadow-glow: 0 0 15px rgba(59, 91, 219, 0.25);
+  --shadow-glow: 0 0 15px rgba(47, 78, 196, 0.25);
 
   --glass-blur: blur(20px) saturate(120%);
   --transition-smooth: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);

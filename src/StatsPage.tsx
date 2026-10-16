@@ -2,13 +2,30 @@ import { useEffect, useState } from 'react';
 import { initDB, subscribeActivities, subscribeUsers } from './db';
 import type { Activity } from './db';
 import './App.css';
-import { Icon, Meta } from './ui';
-import { todayString, countOpenAndOverdue, overdueRate } from './dates';
+import { Icon, IconButton, Avatar, Segmented } from './ui';
+import { todayString } from './dates';
 import { isLive } from './archive';
+import { summarizeUser, sortUsers, donutArcs } from './stats';
+import type { DonutKey, SortKey } from './stats';
+
+// One color per status, shared by the donut, the bars and the legend. Cancelled is gray on
+// purpose: red is reserved for "overdue", the thing that needs attention.
+const STATUS: Record<DonutKey, { label: string; icon: string; color: string }> = {
+  done: { label: 'Hechas', icon: 'check_circle', color: '--chart-done' },
+  doing: { label: 'En curso', icon: 'schedule', color: '--chart-doing' },
+  todo: { label: 'Por hacer', icon: 'assignment', color: '--chart-todo' },
+  cancelled: { label: 'Canceladas', icon: 'cancel', color: '--color-secondary' },
+};
+const DONUT_ORDER: DonutKey[] = ['done', 'doing', 'todo', 'cancelled'];
+
+const RADIUS = 70;
+const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
 function StatsPage({ onBack }: { onBack: () => void }) {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [usersList, setUsersList] = useState<{ username: string; fullName?: string }[]>([]);
+  const [sortBy, setSortBy] = useState<SortKey>('rate');
+  const [expanded, setExpanded] = useState<string | null>(null);
   // Refreshed every minute so "overdue" updates while the page stays open.
   const [today, setToday] = useState(todayString);
   useEffect(() => {
@@ -36,201 +53,205 @@ function StatsPage({ onBack }: { onBack: () => void }) {
     document.body.classList.toggle('light-theme', theme === 'light');
   }, [theme]);
 
-  // Matches the admin dashboard's stat cards, which count personal (non-team)
-  // activities only — team tasks are tracked separately per team, not folded
-  // into an individual's completion rate here.
+  // Matches the admin dashboard's stat cards, which count personal (non-team) live
+  // activities only — team tasks are tracked per team, not folded into a person's numbers.
   const personalActivities = activities.filter(a => !a.teamId && isLive(a));
 
-  const rows = usersList
-    .map(u => {
-      const username = u.username;
-      const displayName = u.fullName || u.username;
-      const acts = personalActivities.filter(a => a.username.toLowerCase() === username.toLowerCase());
-      const todo = acts.filter(a => a.status === 'todo').length;
-      const doing = acts.filter(a => a.status === 'doing').length;
-      const done = acts.filter(a => a.status === 'done').length;
-      const cancelled = acts.filter(a => a.status === 'cancelled').length;
-      const total = acts.length;
-      const todoRate = total === 0 ? 0 : Math.round((todo / total) * 100);
-      const doingRate = total === 0 ? 0 : Math.round((doing / total) * 100);
-      const rate = total === 0 ? 0 : Math.round((done / total) * 100);
-      const cancelRate = total === 0 ? 0 : Math.round((cancelled / total) * 100);
-      const openAndOverdue = countOpenAndOverdue(acts, today);
-      const overdue = openAndOverdue.overdue;
-      const overdueShare = overdueRate(openAndOverdue);
-      return { username, displayName, todo, doing, done, cancelled, total, rate, todoRate, doingRate, cancelRate, overdue, overdueShare };
-    })
-    .sort((a, b) => b.rate - a.rate || b.total - a.total);
+  const people = sortUsers(
+    usersList.map(u => ({
+      username: u.username,
+      displayName: u.fullName || u.username,
+      ...summarizeUser(personalActivities.filter(a => a.username.toLowerCase() === u.username.toLowerCase()), today),
+    })),
+    sortBy
+  );
 
-  const totalAll = personalActivities.length;
-  const totalTodo = personalActivities.filter(a => a.status === 'todo').length;
-  const totalDoing = personalActivities.filter(a => a.status === 'doing').length;
-  const totalDone = personalActivities.filter(a => a.status === 'done').length;
-  const totalCancelled = personalActivities.filter(a => a.status === 'cancelled').length;
+  const all = summarizeUser(personalActivities, today);
+  const arcs = donutArcs(all);
+  const needAttention = people.filter(p => p.overdue > 0).sort((a, b) => b.overdue - a.overdue);
 
-  const overall = countOpenAndOverdue(personalActivities, today);
-  const overallOverdueShare = overdueRate(overall);
-
-  const overallTodoRate = totalAll === 0 ? 0 : Math.round((totalTodo / totalAll) * 100);
-  const overallDoingRate = totalAll === 0 ? 0 : Math.round((totalDoing / totalAll) * 100);
-  const overallRate = totalAll === 0 ? 0 : Math.round((totalDone / totalAll) * 100);
-  const overallCancelRate = totalAll === 0 ? 0 : Math.round((totalCancelled / totalAll) * 100);
+  const openBoard = (username: string) => { window.location.hash = `user-${encodeURIComponent(username)}`; };
 
   return (
     <div className="stats-page">
       <div className="stats-header" style={{ gap: '1rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <button
-            className="btn btn-secondary btn-icon-only"
-            onClick={onBack}
-            data-tip="Volver al Tablero"
-            aria-label="Volver al Tablero"
-            style={{ width: '40px', height: '40px', padding: '0', borderRadius: '50%' }}
-          >
-            <span className="material-symbols-rounded">arrow_back</span>
-          </button>
+          <IconButton icon="arrow_back" label="Volver al tablero" onClick={onBack} size={40} />
           <div>
-            <h1 style={{ margin: '0' }}>Productividad del Equipo</h1>
-            <p style={{ margin: '0.2rem 0 0 0' }}>Actividades por estado y tasa de finalización por persona</p>
+            <h1 style={{ margin: '0' }}>Productividad</h1>
+            <p style={{ margin: '0.2rem 0 0 0' }}>
+              <strong>Completado</strong> = tareas hechas ÷ todas sus tareas. <strong>Retrasadas</strong> = tareas abiertas con la fecha de fin vencida.
+            </p>
           </div>
         </div>
-        <button
-          className="btn btn-secondary btn-icon-only"
+        <IconButton
+          icon={theme === 'dark' ? 'light_mode' : 'dark_mode'}
+          label="Cambiar tema"
           onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
-          data-tip="Cambiar Tema"
-          aria-label="Cambiar Tema"
-        >
-          <span className="material-symbols-rounded">{theme === 'dark' ? 'light_mode' : 'dark_mode'}</span>
-        </button>
+          size={40}
+        />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
-        <div className="glass-panel stats-hero" style={{ margin: '0', borderLeft: '4px solid var(--color-todo)' }} data-tip="Tasa de Por Realizar">
-          <div className="stats-hero-top">
-            <Icon name="assignment" size={22} style={{ color: 'var(--color-todo)' }} />
-            <span className="stats-hero-label">Por hacer</span>
+      <section className="glass-panel stats-summary">
+        <div className="stats-donut" role="img" aria-label={`${all.rate}% completado de ${all.total} tareas`}>
+          <svg viewBox="0 0 180 180" width="180" height="180">
+            <circle cx="90" cy="90" r={RADIUS} className="stats-donut-track" />
+            {arcs.map(a => (
+              <circle
+                key={a.key}
+                cx="90"
+                cy="90"
+                r={RADIUS}
+                className="stats-donut-arc"
+                style={{ stroke: `var(${STATUS[a.key].color})` }}
+                strokeDasharray={`${Math.max(a.fraction * CIRCUMFERENCE - 2, 0)} ${CIRCUMFERENCE}`}
+                strokeDashoffset={-a.start * CIRCUMFERENCE}
+              />
+            ))}
+          </svg>
+          <div className="stats-donut-center">
+            <span className="stats-donut-value">{all.rate}%</span>
+            <span className="stats-donut-label">completado</span>
           </div>
-          <span className="stats-hero-value" style={{ color: 'var(--color-todo)' }}>{overallTodoRate}%</span>
         </div>
-        <div className="glass-panel stats-hero" style={{ margin: '0', borderLeft: '4px solid var(--color-doing)' }} data-tip="Tasa En Proceso">
-          <div className="stats-hero-top">
-            <Icon name="schedule" size={22} style={{ color: 'var(--color-doing)' }} />
-            <span className="stats-hero-label">En curso</span>
-          </div>
-          <span className="stats-hero-value" style={{ color: 'var(--color-doing)' }}>{overallDoingRate}%</span>
-        </div>
-        <div className="glass-panel stats-hero" style={{ margin: '0', borderLeft: '4px solid var(--color-done)' }} data-tip="Tasa de Finalización">
-          <div className="stats-hero-top">
-            <Icon name="check_circle" size={22} style={{ color: 'var(--color-done)' }} />
-            <span className="stats-hero-label">Hechas</span>
-          </div>
-          <span className="stats-hero-value" style={{ color: 'var(--color-done)' }}>{overallRate}%</span>
-        </div>
-        <div className="glass-panel stats-hero" style={{ margin: '0', borderLeft: '4px solid var(--color-danger)' }} data-tip="Tasa de Cancelación">
-          <div className="stats-hero-top">
-            <Icon name="cancel" size={22} style={{ color: 'var(--color-danger)' }} />
-            <span className="stats-hero-label">Canceladas</span>
-          </div>
-          <span className="stats-hero-value" style={{ color: 'var(--color-danger)' }}>{overallCancelRate}%</span>
-        </div>
-        <div className="glass-panel stats-hero" style={{ margin: '0', borderLeft: '4px solid var(--color-danger)' }} data-tip="Retrasadas · % de las abiertas">
-          <div className="stats-hero-top">
-            <Icon name="alarm" size={22} style={{ color: 'var(--color-danger)' }} />
-            <span className="stats-hero-label">Retrasadas</span>
-          </div>
-          <span className="stats-hero-value" style={{ color: 'var(--color-danger)' }}>
-            {overall.overdue} <span style={{ fontSize: '1.1rem', fontWeight: 600 }}>({overallOverdueShare}%)</span>
-          </span>
-        </div>
-      </div>
 
-      {rows.length === 0 ? (
+        <div className="stats-summary-side">
+          <div className="stats-kpis">
+            <div className={`stats-kpi ${all.overdue > 0 ? 'is-danger' : ''}`}>
+              <Icon name="alarm" size={22} />
+              <span className="stats-kpi-value">{all.overdue}</span>
+              <span className="stats-kpi-label">Retrasadas</span>
+              <span className="stats-kpi-sub">{all.open === 0 ? 'sin tareas abiertas' : `${all.overdueShare}% de ${all.open} abiertas`}</span>
+            </div>
+            <div className="stats-kpi">
+              <Icon name="schedule" size={22} style={{ color: 'var(--chart-doing)' }} />
+              <span className="stats-kpi-value">{all.doing}</span>
+              <span className="stats-kpi-label">En curso</span>
+              <span className="stats-kpi-sub">{all.todo} por hacer</span>
+            </div>
+            <div className="stats-kpi">
+              <Icon name="check_circle" size={22} style={{ color: 'var(--chart-done)' }} />
+              <span className="stats-kpi-value">{all.done}</span>
+              <span className="stats-kpi-label">Hechas</span>
+              <span className="stats-kpi-sub">de {all.total} tareas</span>
+            </div>
+          </div>
+          <ul className="stats-key" aria-label="Leyenda de colores">
+            {DONUT_ORDER.map(k => (
+              <li key={k}>
+                <span className="stats-dot" style={{ background: `var(${STATUS[k].color})` }} />
+                {STATUS[k].label} <strong>{all[k]}</strong>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </section>
+
+      {needAttention.length > 0 && (
+        <section className="glass-panel stats-attention">
+          <h2 className="stats-section-title">
+            <Icon name="notification_important" size={20} /> Necesitan atención
+          </h2>
+          <div className="stats-attention-list">
+            {needAttention.map(p => (
+              <button
+                key={p.username}
+                type="button"
+                className="stats-attention-chip"
+                onClick={() => openBoard(p.username)}
+                data-tip="Abrir su tablero"
+              >
+                <Avatar name={p.displayName} size={28} />
+                <span className="stats-attention-name">{p.displayName}</span>
+                <span className="stats-attention-count">
+                  <Icon name="alarm" size={14} /> {p.overdue} {p.overdue === 1 ? 'retrasada' : 'retrasadas'}
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {people.length === 0 ? (
         <div className="glass-panel stats-empty">
           <p>Todavía no hay usuarios con actividades registradas.</p>
         </div>
       ) : (
-        <>
-          <div className="stats-legend">
-            <span className="stats-legend-item">
-              <Icon name="assignment" size={16} style={{ color: 'var(--chart-todo)' }} />
-              Por Realizar
-            </span>
-            <span className="stats-legend-item">
-              <Icon name="schedule" size={16} style={{ color: 'var(--chart-doing)' }} />
-              En Proceso
-            </span>
-            <span className="stats-legend-item">
-              <Icon name="check_circle" size={16} style={{ color: 'var(--chart-done)' }} />
-              Completadas
-            </span>
-            <span className="stats-legend-item">
-              <Icon name="cancel" size={16} style={{ color: 'var(--color-danger)' }} />
-              Canceladas
-            </span>
+        <section>
+          <div className="stats-toolbar">
+            <h2 className="stats-section-title">Por persona</h2>
+            <Segmented
+              ariaLabel="Ordenar por"
+              value={sortBy}
+              onChange={setSortBy}
+              options={[
+                { value: 'rate', label: 'Completado', icon: 'check_circle', color: '--color-primary' },
+                { value: 'overdue', label: 'Retrasadas', icon: 'alarm', color: '--color-danger' },
+                { value: 'total', label: 'Total', icon: 'functions', color: '--color-primary' },
+              ]}
+            />
           </div>
 
-          <div className="stats-rows">
-            {rows.map(r => (
-              <div className={`glass-panel stats-row ${r.overdue > 0 ? 'has-overdue' : ''}`} key={r.username}>
-                <div className="stats-row-head">
-                  <span className="stats-row-name">{r.displayName} <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 'normal' }}>({r.username})</span>
-                    {r.overdue > 0 && (
-                      <Meta icon="alarm" tip={`${r.overdue} ${r.overdue === 1 ? 'retrasada' : 'retrasadas'} · ${r.overdueShare}% de las abiertas`} tone="danger">{r.overdue} · {r.overdueShare}%</Meta>
-                    )}
-                  </span>
-                  <span className="stats-row-rate">
-                    <span className="rate-chip" style={{ ['--c' as string]: 'var(--color-todo)' }} data-tip="Por realizar" role="img" aria-label={`Por realizar: ${r.todoRate}%`}><Icon name="assignment" size={14} />{r.todoRate}%</span>
-                    <span className="rate-chip" style={{ ['--c' as string]: 'var(--color-doing)' }} data-tip="En proceso" role="img" aria-label={`En proceso: ${r.doingRate}%`}><Icon name="schedule" size={14} />{r.doingRate}%</span>
-                    <span className="rate-chip" style={{ ['--c' as string]: 'var(--color-done)' }} data-tip="Completado" role="img" aria-label={`Completado: ${r.rate}%`}><Icon name="check_circle" size={14} />{r.rate}%</span>
-                    <span className="rate-chip" style={{ ['--c' as string]: 'var(--color-danger)' }} data-tip="Cancelado" role="img" aria-label={`Cancelado: ${r.cancelRate}%`}><Icon name="cancel" size={14} />{r.cancelRate}%</span>
-                  </span>
-                </div>
-                {r.total === 0 ? (
-                  <div className="stats-bar" />
-                ) : (
-                  <div className="stats-bar" role="img" aria-label={`${r.username}: ${r.todo} por realizar, ${r.doing} en proceso, ${r.done} completadas, ${r.cancelled} canceladas`}>
-                    {r.todo > 0 && (
-                      <div
-                        className="stats-bar-segment"
-                        style={{ width: `${(r.todo / r.total) * 100}%`, background: 'var(--chart-todo)' }}
-                        title={`Por Realizar: ${r.todo}`}
-                      />
-                    )}
-                    {r.doing > 0 && (
-                      <div
-                        className="stats-bar-segment"
-                        style={{ width: `${(r.doing / r.total) * 100}%`, background: 'var(--chart-doing)' }}
-                        title={`En Proceso: ${r.doing}`}
-                      />
-                    )}
-                    {r.done > 0 && (
-                      <div
-                        className="stats-bar-segment"
-                        style={{ width: `${(r.done / r.total) * 100}%`, background: 'var(--chart-done)' }}
-                        title={`Completadas: ${r.done}`}
-                      />
-                    )}
-                    {r.cancelled > 0 && (
-                      <div
-                        className="stats-bar-segment"
-                        style={{ width: `${(r.cancelled / r.total) * 100}%`, background: 'var(--color-danger)' }}
-                        title={`Canceladas: ${r.cancelled}`}
-                      />
-                    )}
+          <div className="stats-people">
+            {people.map(p => {
+              const isOpen = expanded === p.username;
+              return (
+                <div className={`glass-panel stats-person ${p.overdue > 0 ? 'has-overdue' : ''}`} key={p.username}>
+                  <div className="stats-person-row">
+                    <button
+                      type="button"
+                      className="stats-person-main"
+                      onClick={() => setExpanded(isOpen ? null : p.username)}
+                      aria-expanded={isOpen}
+                    >
+                      <Avatar name={p.displayName} size={40} />
+                      <span className="stats-person-name">
+                        <strong>{p.displayName}</strong>
+                        <small>@{p.username}</small>
+                      </span>
+                      <span className="stats-bar" aria-hidden="true">
+                        {DONUT_ORDER.map(k => p[k] > 0 && (
+                          <span
+                            key={k}
+                            className="stats-bar-segment"
+                            style={{ width: `${(p[k] / p.total) * 100}%`, background: `var(${STATUS[k].color})` }}
+                          />
+                        ))}
+                      </span>
+                      <span className="stats-person-rate">
+                        <strong>{p.total === 0 ? '—' : `${p.rate}%`}</strong>
+                        <small>completado</small>
+                      </span>
+                      <span className={`stats-person-overdue ${p.overdue > 0 ? '' : 'is-empty'}`} data-tip={p.overdue > 0 ? `${p.overdue} retrasadas · ${p.overdueShare}% de las abiertas` : 'Sin retrasadas'}>
+                        <Icon name="alarm" size={16} /> {p.overdue}
+                      </span>
+                      <Icon name={isOpen ? 'expand_less' : 'expand_more'} size={22} className="stats-person-chevron" />
+                    </button>
+                    <IconButton icon="open_in_new" label="Abrir su tablero" variant="tonal" size={34} onClick={() => openBoard(p.username)} />
                   </div>
-                )}
-                <div className="stats-row-counts">
-                  <Meta icon="assignment" tip="Por realizar">{r.todo}</Meta>
-                  <Meta icon="schedule" tip="En proceso">{r.doing}</Meta>
-                  <Meta icon="check_circle" tip="Completadas">{r.done}</Meta>
-                  <Meta icon="cancel" tip="Canceladas">{r.cancelled}</Meta>
-                  <Meta icon="alarm" tip="Retrasadas" tone={r.overdue > 0 ? 'danger' : undefined}>{r.overdue}</Meta>
-                  <Meta icon="functions" tip="Total">{r.total}</Meta>
+
+                  {isOpen && (
+                    <div className="stats-details animate-fade-in">
+                      {DONUT_ORDER.map(k => (
+                        <span className="stats-detail" key={k}>
+                          <Icon name={STATUS[k].icon} size={16} style={{ color: `var(${STATUS[k].color})` }} />
+                          <strong>{p[k]}</strong> {STATUS[k].label.toLowerCase()}
+                        </span>
+                      ))}
+                      <span className={`stats-detail ${p.overdue > 0 ? 'is-danger' : ''}`}>
+                        <Icon name="alarm" size={16} />
+                        <strong>{p.overdue}</strong> retrasadas{p.open > 0 ? ` (${p.overdueShare}% de ${p.open} abiertas)` : ''}
+                      </span>
+                      <span className="stats-detail">
+                        <Icon name="functions" size={16} /> <strong>{p.total}</strong> en total
+                      </span>
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
-        </>
+        </section>
       )}
     </div>
   );

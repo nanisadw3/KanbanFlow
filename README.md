@@ -8,7 +8,7 @@ A real-time, multi-user Kanban board built with React + TypeScript + Node.js (SQ
 - **Real-time sync** across devices powered by **WebSockets (Socket.io)** — any change (create, move, edit, delete) shows up instantly for everyone looking at the same board.
 - **Local SQLite Database** — persistence stored locally in `kanban.db` via Node.js Express server.
 - **Presence indicators** — see who else is online and which board they're currently viewing.
-- **Admin dashboard** — clickable stat cards that double as filters, a searchable/paginated user list, per-user and per-team activity clearing, and a "Ver Productividad" page with completion-rate charts per user.
+- **Admin dashboard** — clickable stat cards that double as filters, a searchable/paginated user list, per-user and per-team activity clearing, and a "Ver Productividad" page: a donut with the team's % completed, three key numbers (overdue / in progress / done), a "Necesitan atención" strip for people with overdue tasks, and a per-person list with a progress bar and big % (sortable; click to expand the details or open their board).
 - **Teams** — group users into teams with a shared Kanban board; task assignment is restricted to that team's members.
 - **Archivero** (folder icon in the header) — anything can be archived from its card (todo, doing or done); archived tasks leave the board but keep the status they had and can be restored. The Archivero also lists every **cancelled** task and completed tasks older than 1 day, with tabs (Todas · Hechas · Canceladas · Archivadas), restore and delete. An archived open task stops counting as open/overdue and sends no overdue email.
 - **Email notices** — every user has a required email; when an admin creates a task for someone they get an email, and a one-time email when one of their tasks becomes overdue. Overdue tasks are also highlighted in red on the board (see [Email notifications](#email-notifications)).
@@ -95,7 +95,7 @@ src/
                   presence, history modal, Google Calendar sync. ~1800 lines, single component.
   App.css         All styling — design tokens, theme, kanban/board/modal/trash-zone styles.
   db.ts           Socket.io client + types, subscriptions, and CRUD functions that emit to the server.
-  StatsPage.tsx   Standalone productivity/stats page (routed via #stats).
+  StatsPage.tsx   Productividad page (routed via #stats); its numbers come from src/stats.ts.
   main.tsx        Entry point.
 server/
   index.ts        Express + Socket.io + SQLite server: schema, socket handlers, and (in
