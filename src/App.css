@@ -1862,3 +1862,73 @@ body.dark-theme .prio-baja {
 .stats-row.has-overdue {
   border-left: 4px solid var(--color-danger);
 }
+
+/* Equipos panel while a filter is active: a one-line strip with only the matching teams */
+.teams-collapsed {
+  padding: 1rem 1.5rem;
+  margin-bottom: 1.5rem;
+  border-radius: 16px;
+}
+
+.teams-collapsed-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.teams-collapsed-head h2 {
+  font-size: 1.15rem;
+  margin: 0;
+}
+
+.teams-collapsed-count,
+.teams-collapsed-empty {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.teams-collapsed-empty {
+  margin: 0.75rem 0 0;
+}
+
+.teams-collapsed-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+}
+
+.team-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.8rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  color: var(--color-primary);
+  background: rgba(var(--color-primary-rgb), 0.12);
+  border: 1px solid rgba(var(--color-primary-rgb), 0.45);
+  transition: var(--transition-smooth);
+}
+
+.team-chip:hover {
+  background: rgba(var(--color-primary-rgb), 0.2);
+}
+
+.team-chip-match {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.team-card.is-match {
+  border-color: rgba(var(--color-primary-rgb), 0.6);
+  box-shadow: 0 0 0 2px rgba(var(--color-primary-rgb), 0.18);
+}
+
+.team-card.is-dimmed {
+  opacity: 0.45;
+}

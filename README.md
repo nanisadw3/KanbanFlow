@@ -13,6 +13,7 @@ A real-time, multi-user Kanban board built with React + TypeScript + Node.js (SQ
 - **Auto-archive / Historial** — completed tasks stay on the live board for 1 day, then quietly move to a per-context "Historial" view (still there, just off the busy board).
 - **Email notices** — every user has a required email; when an admin creates a task for someone they get an email, and a one-time email when one of their tasks becomes overdue. Overdue tasks are also highlighted in red on the board (see [Email notifications](#email-notifications)).
 - **Overdue tasks, front and center** — the admin dashboard has a "Retrasadas" card that filters (combined with the status filters), people with late tasks are listed first with a red badge, each late task shows "Venció hace N días", and the productivity page reports the count and the share of open tasks that are late per person and overall.
+- **Filters reach the teams** — while any admin filter is active the Equipos panel collapses to a strip that lists only the teams with tasks matching it (e.g. "SEOSG · 1 retrasada"); "Mostrar todos" expands it, highlighting matching teams and dimming the rest.
 - **Auto-complete at 100%** — raising a task's progress to 100 moves it to "Realizado" by itself.
 - **Light/dark theme**, persisted in `localStorage`.
 

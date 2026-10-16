@@ -31,6 +31,7 @@ import type { Activity, User, Team, PresenceEntry } from './db';
 // Using Material Symbols Rounded via Google Fonts, no Lucide React imports needed
 import './App.css';
 import { todayString, isOverdue as isOverdueOn, overdueLabel } from './dates';
+import { isFilterActive, summarizeMatches, describeMatches } from './filters';
 import StatsPage from './StatsPage';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -68,6 +69,7 @@ function App() {
   const [targetAssignee, setTargetAssignee] = useState<string>('');  // Admin filter
   const [viewingUserAsAdmin, setViewingUserAsAdmin] = useState<User | null>(null);
   const [overdueOnly, setOverdueOnly] = useState(false); // admin: also require "overdue"
+  const [teamsExpanded, setTeamsExpanded] = useState(false); // Equipos panel, only matters while a filter is active
   const [activeStatusFilters, setActiveStatusFilters] = useState<Set<'todo' | 'doing' | 'done' | 'cancelled'>>(new Set());
   const [activeUserFilters, setActiveUserFilters] = useState<Set<string>>(new Set());
   const [isUsersPanelOpen, setIsUsersPanelOpen] = useState(false);
@@ -270,6 +272,15 @@ function App() {
     const t = setInterval(() => setToday(todayString()), 60_000);
     return () => clearInterval(t);
   }, []);
+
+  // The admin dashboard's filter as data (shared with the team panel's matching).
+  const taskFilter = { statuses: activeStatusFilters, overdueOnly, users: activeUserFilters };
+  const filterActive = isFilterActive(taskFilter);
+
+  // Clearing the filter resets the Equipos panel to its normal, fully shown state.
+  useEffect(() => {
+    if (!filterActive) setTeamsExpanded(false);
+  }, [filterActive]);
 
   // Briefly plays the trash "burst" animation after a task is cancelled.
   useEffect(() => {
@@ -1232,31 +1243,87 @@ function App() {
             </div>
           )}
 
-          {/* Teams management */}
+          {/* Teams management. While a filter is active it collapses to a strip that lists
+              only the teams with tasks matching the filter (expandable by hand). */}
+          {(() => {
+            const teamRows = teams.map(t => {
+              const summary = summarizeMatches(activities.filter(a => a.teamId === t.id), taskFilter, today);
+              return { team: t, summary, matches: summary.matching > 0 };
+            });
+            const matchingTeams = teamRows.filter(r => r.matches);
+
+            if (filterActive && !teamsExpanded) {
+              return (
+                <div className="glass-panel teams-collapsed animate-fade-in">
+                  <div className="teams-collapsed-head">
+                    <div className="activity-map-title">
+                      <span className="material-symbols-rounded" style={{ fontSize: '22px', color: 'var(--color-secondary)' }}>groups</span>
+                      <h2>Equipos</h2>
+                      <span className="teams-collapsed-count">
+                        {teams.length === 0 ? 'sin equipos' : `${matchingTeams.length} de ${teams.length} coinciden con el filtro`}
+                      </span>
+                    </div>
+                    <button type="button" className="btn btn-secondary" style={{ width: 'auto', gap: '0.3rem' }} onClick={() => setTeamsExpanded(true)}>
+                      <span className="material-symbols-rounded">expand_more</span> Mostrar todos
+                    </button>
+                  </div>
+                  {teams.length > 0 && (
+                    matchingTeams.length === 0 ? (
+                      <p className="teams-collapsed-empty">Ningún equipo coincide con el filtro.</p>
+                    ) : (
+                      <div className="teams-collapsed-chips">
+                        {matchingTeams.map(({ team, summary }) => (
+                          <button
+                            key={team.id}
+                            type="button"
+                            className="team-chip"
+                            onClick={() => handleSelectTeam(team)}
+                            title="Clic para ver el tablero de este equipo"
+                          >
+                            <span className="material-symbols-rounded" style={{ fontSize: '16px' }}>groups</span>
+                            <strong>{team.name}</strong>
+                            <span className="team-chip-match">{describeMatches(summary, taskFilter)}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )
+                  )}
+                </div>
+              );
+            }
+
+            return (
           <div className="glass-panel activity-map-section">
             <div className="admin-header">
               <div className="activity-map-title">
                 <span className="material-symbols-rounded" style={{ fontSize: '24px', color: 'var(--color-secondary)' }}>groups</span>
                 <h2>Equipos</h2>
               </div>
-              <button
-                type="button"
-                className="btn btn-primary"
-                style={{ width: 'auto', gap: '0.4rem' }}
-                onClick={openCreateTeamModal}
-              >
-                <span className="material-symbols-rounded">add</span> Crear Equipo
-              </button>
+              <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
+                {filterActive && (
+                  <button type="button" className="btn btn-secondary" style={{ width: 'auto', gap: '0.3rem' }} onClick={() => setTeamsExpanded(false)}>
+                    <span className="material-symbols-rounded">expand_less</span> Minimizar
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  style={{ width: 'auto', gap: '0.4rem' }}
+                  onClick={openCreateTeamModal}
+                >
+                  <span className="material-symbols-rounded">add</span> Crear Equipo
+                </button>
+              </div>
             </div>
 
             {teams.length === 0 ? (
               <p className="teams-empty">Todavía no has creado ningún equipo. Agrupa usuarios para que puedan colaborar juntos en un tablero compartido.</p>
             ) : (
               <div className="teams-grid">
-                {teams.map(t => {
+                {teamRows.map(({ team: t, summary, matches }) => {
                   const teamTaskCount = activities.filter(a => a.teamId === t.id).length;
                   return (
-                    <div key={t.id} className="team-card" onClick={() => handleSelectTeam(t)} title="Clic para ver el tablero de este equipo">
+                    <div key={t.id} className={`team-card ${filterActive ? (matches ? 'is-match' : 'is-dimmed') : ''}`} onClick={() => handleSelectTeam(t)} title="Clic para ver el tablero de este equipo">
                       <button
                         type="button"
                         className="btn btn-secondary btn-icon-only delete-user-btn team-card-delete"
@@ -1270,6 +1337,9 @@ function App() {
                       </div>
                       <div className="team-card-name">{t.name}</div>
                       <div className="team-card-meta">{t.memberUsernames.length} miembros · {teamTaskCount} {teamTaskCount === 1 ? 'tarea' : 'tareas'}</div>
+                      {filterActive && matches && (
+                        <div className="team-chip-match" style={{ marginTop: '0.3rem' }}>{describeMatches(summary, taskFilter)}</div>
+                      )}
                       <div className="team-card-members">
                         {t.memberUsernames.slice(0, 5).map(m => {
                           const u = users.find(user => user.username.toLowerCase() === m.toLowerCase());
@@ -1288,6 +1358,8 @@ function App() {
               </div>
             )}
           </div>
+            );
+          })()}
 
           {/* Activity Map / Grid Header */}
           <div className="glass-panel activity-map-section">
