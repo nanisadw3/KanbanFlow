@@ -94,13 +94,13 @@ function App() {
   const [passwordFormSuccess, setPasswordFormSuccess] = useState(false);
   const [createUserError, setCreateUserError] = useState('');
   const [isMailModalOpen, setIsMailModalOpen] = useState(false);
-  const [mailHost, setMailHost] = useState('');
-  const [mailPort, setMailPort] = useState('587');
-  const [mailUser, setMailUser] = useState('');
-  const [mailPass, setMailPass] = useState('');
+  const [mailClientId, setMailClientId] = useState('');
+  const [mailClientSecret, setMailClientSecret] = useState('');
+  const [mailRefreshToken, setMailRefreshToken] = useState('');
   const [mailFrom, setMailFrom] = useState('');
   const [mailAdminPass, setMailAdminPass] = useState('');
-  const [mailHasPassword, setMailHasPassword] = useState(false);
+  const [mailHasSecret, setMailHasSecret] = useState(false);
+  const [mailHasRefreshToken, setMailHasRefreshToken] = useState(false);
   const [mailBusy, setMailBusy] = useState(false);
   const [mailMsg, setMailMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [newUserEmail, setNewUserEmail] = useState('');        // modal "Agregar usuario"
@@ -399,26 +399,25 @@ function App() {
   };
 
   const openMailModal = async () => {
-    setMailPass('');
+    setMailClientSecret('');
+    setMailRefreshToken('');
     setMailAdminPass('');
     setMailMsg(null);
     setIsMailModalOpen(true);
     const res = await getMailSettings();
     if (res.ok && res.settings) {
-      setMailHost(res.settings.host);
-      setMailPort(String(res.settings.port));
-      setMailUser(res.settings.user);
+      setMailClientId(res.settings.clientId);
       setMailFrom(res.settings.from);
-      setMailHasPassword(res.settings.hasPassword);
+      setMailHasSecret(res.settings.hasClientSecret);
+      setMailHasRefreshToken(res.settings.hasRefreshToken);
     }
   };
 
   const mailErrorText = (res: { error?: string; message?: string }) => {
     switch (res.error) {
       case 'bad_password': return 'Tu contraseña de administrador es incorrecta.';
-      case 'invalid_port': return 'El puerto debe ser un número entre 1 y 65535.';
       case 'timeout': return 'No se pudo conectar con el servidor.';
-      case 'not_configured': return 'Primero guarda la configuración (servidor, usuario y contraseña).';
+      case 'not_configured': return 'Primero guarda la configuración (Client ID, Client Secret y Refresh token).';
       case 'no_email': return 'Tu usuario no tiene correo registrado para recibir la prueba.';
       case 'send_failed': return `No se pudo enviar: ${res.message ?? 'error desconocido'}`;
       default: return 'No se pudo completar la operación.';
@@ -432,20 +431,24 @@ function App() {
     setMailMsg(null);
     const res = await saveMailSettings({
       adminUsername: user.username, adminPassword: mailAdminPass,
-      host: mailHost, port: mailPort, user: mailUser, pass: mailPass, from: mailFrom,
+      clientId: mailClientId, clientSecret: mailClientSecret, refreshToken: mailRefreshToken, from: mailFrom,
     });
     setMailBusy(false);
     if (!res.ok) {
       setMailMsg({ ok: false, text: mailErrorText(res) });
       return;
     }
-    if (res.settings) setMailHasPassword(res.settings.hasPassword);
-    setMailPass('');
+    if (res.settings) {
+      setMailHasSecret(res.settings.hasClientSecret);
+      setMailHasRefreshToken(res.settings.hasRefreshToken);
+    }
+    setMailClientSecret('');
+    setMailRefreshToken('');
     setMailMsg({
       ok: true,
       text: res.enabled
         ? 'Configuración guardada. Los avisos por correo están activos.'
-        : 'Configuración guardada, pero los correos siguen deshabilitados: faltan servidor, usuario o contraseña.',
+        : 'Configuración guardada, pero los correos siguen deshabilitados: faltan Client ID, Client Secret o Refresh token.',
     });
   };
 
@@ -2196,36 +2199,37 @@ function App() {
 
             <form onSubmit={handleSaveMail} style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>
-                Cuenta SMTP desde la que salen los avisos de tareas nuevas y retrasadas.
+                Cuenta de Gmail (por la API de Gmail) desde la que salen los avisos de tareas nuevas y retrasadas.
               </p>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 110px', gap: '0.75rem' }}>
-                <div className="form-group">
-                  <FieldLabel icon="dns">Servidor SMTP</FieldLabel>
-                  <input type="text" className="form-input" placeholder="smtp.gmail.com" value={mailHost} onChange={(e) => setMailHost(e.target.value)} />
-                </div>
-                <div className="form-group">
-                  <FieldLabel icon="tag">Puerto</FieldLabel>
-                  <input type="number" className="form-input" min={1} max={65535} value={mailPort} onChange={(e) => setMailPort(e.target.value)} />
-                </div>
+              <div className="form-group">
+                <FieldLabel icon="badge">Client ID</FieldLabel>
+                <input type="text" className="form-input" placeholder="1234-abc.apps.googleusercontent.com" autoComplete="off" value={mailClientId} onChange={(e) => setMailClientId(e.target.value)} />
               </div>
               <div className="form-group">
-                <FieldLabel icon="account_circle">Usuario (cuenta de inicio de sesión)</FieldLabel>
-                <input type="text" className="form-input" placeholder="tucuenta@gmail.com" autoComplete="off" value={mailUser} onChange={(e) => setMailUser(e.target.value)} />
-              </div>
-              <div className="form-group">
-                <FieldLabel icon="key">Contraseña de aplicación</FieldLabel>
+                <FieldLabel icon="key">Client Secret</FieldLabel>
                 <input
                   type="password"
                   className="form-input"
                   autoComplete="new-password"
-                  placeholder={mailHasPassword ? 'Guardada — déjalo vacío para conservarla' : 'Contraseña de aplicación'}
-                  value={mailPass}
-                  onChange={(e) => setMailPass(e.target.value)}
+                  placeholder={mailHasSecret ? 'Guardado — déjalo vacío para conservarlo' : 'Client Secret'}
+                  value={mailClientSecret}
+                  onChange={(e) => setMailClientSecret(e.target.value)}
                 />
               </div>
               <div className="form-group">
-                <FieldLabel icon="forward_to_inbox">Remitente (De)</FieldLabel>
-                <input type="text" className="form-input" placeholder="KanbanFlow <avisos@tudominio.com>" value={mailFrom} onChange={(e) => setMailFrom(e.target.value)} />
+                <FieldLabel icon="vpn_key">Refresh token</FieldLabel>
+                <input
+                  type="password"
+                  className="form-input"
+                  autoComplete="new-password"
+                  placeholder={mailHasRefreshToken ? 'Guardado — déjalo vacío para conservarlo' : '1//0g...'}
+                  value={mailRefreshToken}
+                  onChange={(e) => setMailRefreshToken(e.target.value)}
+                />
+              </div>
+              <div className="form-group">
+                <FieldLabel icon="forward_to_inbox">Remitente (De, opcional)</FieldLabel>
+                <input type="text" className="form-input" placeholder="KanbanFlow" value={mailFrom} onChange={(e) => setMailFrom(e.target.value)} />
               </div>
               <div className="form-group">
                 <FieldLabel icon="admin_panel_settings">Tu contraseña de administrador</FieldLabel>

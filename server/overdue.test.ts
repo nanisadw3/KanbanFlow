@@ -59,7 +59,7 @@ test('usuario sin correo: no marca; avisa cuando ya tiene correo', async () => {
   assert.equal(sent[0].to, 'sin@x.com');
 });
 
-test('fallo SMTP: no marca y reintenta después', async () => {
+test('fallo de envío: no marca y reintenta después', async () => {
   const db = await makeDb();
   await addAct(db, '1', '2026-10-01', 'todo');
   const bad = createMailer({ sendMail: async () => { throw new Error('down'); } }, 'k@x.com');

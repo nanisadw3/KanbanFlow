@@ -1,9 +1,9 @@
 import type { Database } from 'sqlite';
-import type { SmtpConfig } from './mailer.ts';
+import type { MailConfig } from './mailer.ts';
 
-// Key/value settings table. SMTP values saved here (from the admin panel) win over the
-// SMTP_* env vars, field by field. The password is stored as-is — SMTP needs the real
-// value — so it must never be sent to a client (see publicSmtpSettings).
+// Key/value settings table. Gmail API values saved here (from the admin panel) win over the
+// GMAIL_* env vars, field by field. The client secret and refresh token are stored as-is —
+// they are the credentials — so they must never be sent to a client (see publicMailSettings).
 export async function ensureSettingsTable(db: Database): Promise<void> {
   await db.exec('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
 }
@@ -20,33 +20,40 @@ export async function setSetting(db: Database, key: string, value: string): Prom
   );
 }
 
-const SMTP_KEYS = { host: 'smtp_host', port: 'smtp_port', user: 'smtp_user', pass: 'smtp_pass', from: 'smtp_from' } as const;
+const MAIL_KEYS = {
+  clientId: 'gmail_client_id',
+  clientSecret: 'gmail_client_secret',
+  refreshToken: 'gmail_refresh_token',
+  from: 'mail_from',
+} as const;
 
-export async function resolveSmtpConfig(db: Database, env: NodeJS.ProcessEnv = process.env): Promise<SmtpConfig> {
-  const [host, port, user, pass, from] = await Promise.all([
-    getSetting(db, SMTP_KEYS.host), getSetting(db, SMTP_KEYS.port), getSetting(db, SMTP_KEYS.user),
-    getSetting(db, SMTP_KEYS.pass), getSetting(db, SMTP_KEYS.from),
-  ]);
+const FIELDS = ['clientId', 'clientSecret', 'refreshToken', 'from'] as const;
+
+export async function resolveMailConfig(db: Database, env: NodeJS.ProcessEnv = process.env): Promise<MailConfig> {
+  const [clientId, clientSecret, refreshToken, from] = await Promise.all(FIELDS.map(f => getSetting(db, MAIL_KEYS[f])));
   return {
-    host: host || env.SMTP_HOST || undefined,
-    port: Number(port || env.SMTP_PORT) || undefined,
-    user: user || env.SMTP_USER || undefined,
-    pass: pass || env.SMTP_PASS || undefined,
+    clientId: clientId || env.GMAIL_CLIENT_ID || undefined,
+    clientSecret: clientSecret || env.GMAIL_CLIENT_SECRET || undefined,
+    refreshToken: refreshToken || env.GMAIL_REFRESH_TOKEN || undefined,
     from: from || env.MAIL_FROM || undefined,
   };
 }
 
-// An empty/undefined field leaves the stored value alone, so the password field can be
-// left blank to keep the current one.
-export async function saveSmtpSettings(db: Database, patch: SmtpConfig): Promise<void> {
-  for (const field of ['host', 'user', 'pass', 'from'] as const) {
+// An empty/undefined field leaves the stored value alone, so the secret fields can be
+// left blank to keep the current ones.
+export async function saveMailConfig(db: Database, patch: MailConfig): Promise<void> {
+  for (const field of FIELDS) {
     const value = patch[field];
-    if (typeof value === 'string' && value.trim() !== '') await setSetting(db, SMTP_KEYS[field], value.trim());
+    if (typeof value === 'string' && value.trim() !== '') await setSetting(db, MAIL_KEYS[field], value.trim());
   }
-  if (typeof patch.port === 'number' && patch.port > 0) await setSetting(db, SMTP_KEYS.port, String(patch.port));
 }
 
-export async function publicSmtpSettings(db: Database, env: NodeJS.ProcessEnv = process.env) {
-  const cfg = await resolveSmtpConfig(db, env);
-  return { host: cfg.host ?? '', port: cfg.port ?? 587, user: cfg.user ?? '', from: cfg.from ?? '', hasPassword: !!cfg.pass };
+export async function publicMailSettings(db: Database, env: NodeJS.ProcessEnv = process.env) {
+  const cfg = await resolveMailConfig(db, env);
+  return {
+    clientId: cfg.clientId ?? '',
+    from: cfg.from ?? '',
+    hasClientSecret: !!cfg.clientSecret,
+    hasRefreshToken: !!cfg.refreshToken,
+  };
 }

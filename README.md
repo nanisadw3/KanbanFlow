@@ -49,26 +49,27 @@ There's no session-based auth, and **there is no self-registration**: only an ad
 
 ## Email notifications
 
-Notices are sent by the server from a **single SMTP account** (not from each admin's own account):
+Notices are sent by the server through the **Gmail API** (HTTPS, port 443 — no SMTP) from a **single Gmail account** (not from each admin's own account):
 
 - **New task** — when an admin creates a task assigned to another user who has an email.
 - **Overdue task** — once per task, the day after its end date, if it isn't done or cancelled. The server checks the moment a task is created, edited, archived/restored or changes status, **at local midnight** (when tasks become overdue), and every 5 minutes as a safety net, so the email goes out right away. Changing the end date or reopening a done/cancelled task re-arms the notice.
 
-Configure it from the admin panel (**envelope button → "Correo de avisos"**): SMTP server, port, login user, app password and sender. Saving or sending a test email needs the admin's own password. The server never sends the stored SMTP password back to the browser. Values saved in the panel live in the `settings` table of `kanban.db` (the password in plain text — SMTP needs the real value — so treat `kanban.db` and its backups as secret) and take priority over the environment variables below, which remain as a fallback:
+Configure it from the admin panel (**envelope button → "Correo de avisos"**): OAuth **Client ID**, **Client Secret**, **Refresh token** and an optional sender name. Saving or sending a test email needs the admin's own password. The server never sends the stored secret or refresh token back to the browser. Values saved in the panel live in the `settings` table of `kanban.db` (in plain text — they are the real credentials — so treat `kanban.db` and its backups as secret) and take priority over the environment variables below, which remain as a fallback.
+
+One-time Google setup (Gmail account that will send): in Google Cloud create a project, enable the **Gmail API**, configure the OAuth consent screen and **publish it ("In production")** — in "Testing" the refresh token expires after 7 days — then create an OAuth client of type *Web application* with the redirect URI `https://developers.google.com/oauthplayground`. Get the refresh token in the [OAuth Playground](https://developers.google.com/oauthplayground) using your own credentials (gear icon) and the scope `https://www.googleapis.com/auth/gmail.send`.
 
 | Variable | Meaning |
 |---|---|
-| `SMTP_HOST` | SMTP server, e.g. `smtp.gmail.com` |
-| `SMTP_PORT` | Port (default `587`; `465` uses TLS) |
-| `SMTP_USER` / `SMTP_PASS` | SMTP login. For Gmail use an **app password**, not your account password |
-| `MAIL_FROM` | Sender shown to recipients (default `KanbanFlow <SMTP_USER>`) |
+| `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` | OAuth client credentials from Google Cloud |
+| `GMAIL_REFRESH_TOKEN` | Refresh token authorizing `gmail.send` for the sending account |
+| `MAIL_FROM` | Optional sender name shown to recipients (Gmail forces the address to the authorized account) |
 | `TZ` | Time zone that decides when "today" rolls over (set it in Docker) |
 
 ```bash
-SMTP_HOST=smtp.gmail.com SMTP_USER=avisos@tudominio.com SMTP_PASS=xxxx npm run dev
+GMAIL_CLIENT_ID=xxx GMAIL_CLIENT_SECRET=xxx GMAIL_REFRESH_TOKEN=xxx npm run dev
 ```
 
-Without a server, user and password (panel or environment) the app works normally but sends no emails (a warning is logged at startup). Users who have no email yet are asked for one when they log in.
+Without a Client ID, Client Secret and Refresh token (panel or environment) the app works normally but sends no emails (a warning is logged at startup). Users who have no email yet are asked for one when they log in.
 
 Server-side logic has unit tests: `npm run test:server`.
 
@@ -103,9 +104,9 @@ server/
   index.ts        Express + Socket.io + SQLite server: schema, socket handlers, and (in
                   production) serves the built frontend from the same port.
   email.ts        Email validation.
-  mailer.ts       nodemailer transport + the two email templates.
+  mailer.ts       Gmail API sender (OAuth refresh token → access token → `messages.send`) + the two email templates.
   overdue.ts      Periodic overdue-task check (sends each notice once).
-  settings.ts     `settings` table: SMTP config saved from the admin panel (overrides env vars).
+  settings.ts     `settings` table: Gmail API config saved from the admin panel (overrides env vars).
   autocomplete.ts Rule that moves a task to "done" when its progress reaches 100.
   *.test.ts       node:test unit tests (`npm run test:server`).
 Dockerfile, .dockerignore   Container build/serve.

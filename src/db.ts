@@ -157,10 +157,10 @@ export const createUserByAdmin = (payload: {
 export const setUserEmail = (username: string, email: string): Promise<AuthResult> =>
   emitWithAck('user:setEmail', { username, email });
 
-// --- Mail settings (admin panel). The server never sends the SMTP password back; changing
-// or testing the settings needs the calling admin's password. ---
+// --- Mail settings (admin panel). The server never sends the client secret or refresh token
+// back; changing or testing the settings needs the calling admin's password. ---
 
-export interface MailSettings { host: string; port: number; user: string; from: string; hasPassword: boolean }
+export interface MailSettings { clientId: string; from: string; hasClientSecret: boolean; hasRefreshToken: boolean }
 export interface MailAck { ok: boolean; error?: string; message?: string; enabled?: boolean; settings?: MailSettings; to?: string }
 
 const askMail = (event: string, payload: object): Promise<MailAck> =>
@@ -173,7 +173,7 @@ const askMail = (event: string, payload: object): Promise<MailAck> =>
 export const getMailSettings = (): Promise<MailAck> => askMail('settings:getMail', {});
 
 export const saveMailSettings = (payload: {
-  adminUsername: string; adminPassword: string; host: string; port: string; user: string; pass: string; from: string;
+  adminUsername: string; adminPassword: string; clientId: string; clientSecret: string; refreshToken: string; from: string;
 }): Promise<MailAck> => askMail('settings:saveMail', payload);
 
 export const testMailSettings = (adminUsername: string, adminPassword: string): Promise<MailAck> =>

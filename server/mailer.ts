@@ -1,5 +1,3 @@
-import nodemailer from 'nodemailer';
-
 export interface MailTask {
   title: string;
   description: string;
@@ -38,41 +36,101 @@ export function createMailer(transport: Transport | null, from: string): Mailer 
   };
 }
 
-export interface SmtpConfig {
-  host?: string;
-  port?: number;
-  user?: string;
-  pass?: string;
+// Mail goes out through the Gmail API over HTTPS (port 443) instead of SMTP: some networks
+// let HTTPS through but stall SMTP/STARTTLS. Auth is OAuth2 with a long-lived refresh token.
+export interface MailConfig {
+  clientId?: string;
+  clientSecret?: string;
+  refreshToken?: string;
+  // Optional display name/address. Gmail rewrites the address to the authorized account
+  // unless it is a verified alias, so in practice this just sets the visible name.
   from?: string;
 }
 
-export function mailerFromConfig(cfg: SmtpConfig): Mailer {
-  const { host, user, pass } = cfg;
-  if (!host || !user || !pass) {
-    console.warn('[Mailer] SMTP (servidor, usuario y contraseña) no configurado: los correos están deshabilitados.');
+const TOKEN_URL = 'https://oauth2.googleapis.com/token';
+const SEND_URL = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send';
+const REQUEST_TIMEOUT_MS = 15_000;
+
+// Header values come from user data (assignee email), so strip line breaks to rule out
+// header injection.
+const oneLine = (s: string) => s.replace(/[\r\n]+/g, ' ').trim();
+const base64url = (b: Buffer) => b.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+export function buildRawMessage(m: { from?: string; to: string; subject: string; text: string }): string {
+  const headers = [
+    ...(m.from ? [`From: ${oneLine(m.from)}`] : []),
+    `To: ${oneLine(m.to)}`,
+    `Subject: =?UTF-8?B?${Buffer.from(oneLine(m.subject)).toString('base64')}?=`,
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset=UTF-8',
+    'Content-Transfer-Encoding: base64',
+  ];
+  const body = Buffer.from(m.text).toString('base64').replace(/.{1,76}/g, '$&\r\n');
+  return base64url(Buffer.from(`${headers.join('\r\n')}\r\n\r\n${body}`));
+}
+
+async function googleError(res: Response): Promise<string> {
+  const body: any = await res.json().catch(() => null);
+  const detail = body?.error_description ?? body?.error?.message ?? (typeof body?.error === 'string' ? body.error : '');
+  return `${detail || 'sin detalle'} (HTTP ${res.status})`;
+}
+
+export function createGmailTransport(
+  cfg: Required<Pick<MailConfig, 'clientId' | 'clientSecret' | 'refreshToken'>>,
+  fetchFn: typeof fetch = fetch
+): Transport {
+  let token: { value: string; expiresAt: number } | null = null;
+
+  const accessToken = async (): Promise<string> => {
+    if (token && Date.now() < token.expiresAt) return token.value;
+    const res = await fetchFn(TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: cfg.clientId,
+        client_secret: cfg.clientSecret,
+        refresh_token: cfg.refreshToken,
+        grant_type: 'refresh_token',
+      }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!res.ok) throw new Error(`Google rechazó las credenciales: ${await googleError(res)}`);
+    const data = (await res.json()) as { access_token: string; expires_in: number };
+    // Renew a minute early so a token never expires mid-request.
+    token = { value: data.access_token, expiresAt: Date.now() + (data.expires_in - 60) * 1000 };
+    return token.value;
+  };
+
+  return {
+    async sendMail({ from, to, subject, text }) {
+      const res = await fetchFn(SEND_URL, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${await accessToken()}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ raw: buildRawMessage({ from, to, subject, text }) }),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      if (!res.ok) {
+        if (res.status === 401) token = null;
+        throw new Error(`Gmail rechazó el envío: ${await googleError(res)}`);
+      }
+    },
+  };
+}
+
+export function mailerFromConfig(cfg: MailConfig, fetchFn?: typeof fetch): Mailer {
+  const { clientId, clientSecret, refreshToken } = cfg;
+  if (!clientId || !clientSecret || !refreshToken) {
+    console.warn('[Mailer] Gmail (Client ID, Client Secret y Refresh token) no configurado: los correos están deshabilitados.');
     return createMailer(null, '');
   }
-  const port = cfg.port || 587;
-  const transport = nodemailer.createTransport({
-    host,
-    port,
-    secure: port === 465,
-    auth: { user, pass },
-    // Fail fast with a real reason (nodemailer's defaults wait 2 min to connect) so the
-    // admin panel's "test" button reports it instead of timing out.
-    connectionTimeout: 10_000,
-    greetingTimeout: 10_000,
-    socketTimeout: 20_000,
-  });
-  return createMailer(transport, cfg.from || `KanbanFlow <${user}>`);
+  return createMailer(createGmailTransport({ clientId, clientSecret, refreshToken }, fetchFn), cfg.from ?? '');
 }
 
 export function mailerFromEnv(env: NodeJS.ProcessEnv = process.env): Mailer {
   return mailerFromConfig({
-    host: env.SMTP_HOST,
-    port: Number(env.SMTP_PORT) || undefined,
-    user: env.SMTP_USER,
-    pass: env.SMTP_PASS,
+    clientId: env.GMAIL_CLIENT_ID,
+    clientSecret: env.GMAIL_CLIENT_SECRET,
+    refreshToken: env.GMAIL_REFRESH_TOKEN,
     from: env.MAIL_FROM,
   });
 }

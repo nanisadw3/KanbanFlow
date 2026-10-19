@@ -9,7 +9,7 @@ import { existsSync, mkdirSync } from 'fs';
 import { scrypt as scryptCb, randomBytes, timingSafeEqual } from 'crypto';
 import { normalizeEmail } from './email.ts';
 import { createMailer, mailerFromConfig, newTaskMessage, type Mailer } from './mailer.ts';
-import { ensureSettingsTable, getSetting, setSetting, resolveSmtpConfig, saveSmtpSettings, publicSmtpSettings } from './settings.ts';
+import { ensureSettingsTable, getSetting, setSetting, resolveMailConfig, saveMailConfig, publicMailSettings } from './settings.ts';
 import { autoCompleteAtFull } from './autocomplete.ts';
 import { validateNewUser, createUser, touchLogin } from './users.ts';
 import { createOverdueChecker, msUntilNextLocalMidnight } from './overdue.ts';
@@ -74,7 +74,7 @@ const __dirname = path.dirname(__filename);
 // overridden to a mounted volume (see Dockerfile/DB_PATH) so the database
 // survives container restarts and image rebuilds.
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../kanban.db');
-// Built from the settings table (falling back to SMTP_* env vars) once the DB is open, and
+// Built from the settings table (falling back to GMAIL_* env vars) once the DB is open, and
 // rebuilt whenever an admin saves new mail settings.
 let mailer: Mailer = createMailer(null, '');
 
@@ -168,7 +168,7 @@ async function initSQLite() {
   }
 
   await ensureSettingsTable(db);
-  mailer = mailerFromConfig(await resolveSmtpConfig(db));
+  mailer = mailerFromConfig(await resolveMailConfig(db));
 
   // One-time: tasks already at 100% progress but still in todo/doing go to "done"
   // (the same rule activity:update now applies when progress reaches 100).
@@ -538,7 +538,7 @@ io.on('connection', async (socket) => {
     await broadcastTeams();
   });
 
-  // Mail settings. Reading is open (the password never leaves the server); changing or
+  // Mail settings. Reading is open (the secrets never leave the server); changing or
   // testing them needs an admin's password, checked like auth:changePassword.
   const checkAdmin = async (username: unknown, password: unknown) => {
     const row = await db.get<{ username: string; role: string | null; passwordHash: string | null }>(
@@ -550,21 +550,21 @@ io.on('connection', async (socket) => {
   };
 
   socket.on('settings:getMail', async (_payload: unknown, ack?: (res: object) => void) => {
-    (ack ?? (() => {}))({ ok: true, settings: await publicSmtpSettings(db), enabled: mailer.enabled });
+    (ack ?? (() => {}))({ ok: true, settings: await publicMailSettings(db), enabled: mailer.enabled });
   });
 
   socket.on('settings:saveMail', async (
-    payload: { adminUsername?: string; adminPassword?: string; host?: string; port?: number | string; user?: string; pass?: string; from?: string },
+    payload: { adminUsername?: string; adminPassword?: string; clientId?: string; clientSecret?: string; refreshToken?: string; from?: string },
     ack?: (res: object) => void
   ) => {
     const reply = ack ?? (() => {});
     if (!(await checkAdmin(payload?.adminUsername, payload?.adminPassword))) return reply(await failAuth('bad_password'));
     failedAuthAttempts = 0;
-    const port = payload.port === undefined || payload.port === '' ? undefined : Number(payload.port);
-    if (port !== undefined && (!Number.isInteger(port) || port < 1 || port > 65535)) return reply({ ok: false, error: 'invalid_port' });
-    await saveSmtpSettings(db, { host: payload.host, port, user: payload.user, pass: payload.pass, from: payload.from });
-    mailer = mailerFromConfig(await resolveSmtpConfig(db));
-    reply({ ok: true, enabled: mailer.enabled, settings: await publicSmtpSettings(db) });
+    await saveMailConfig(db, {
+      clientId: payload.clientId, clientSecret: payload.clientSecret, refreshToken: payload.refreshToken, from: payload.from,
+    });
+    mailer = mailerFromConfig(await resolveMailConfig(db));
+    reply({ ok: true, enabled: mailer.enabled, settings: await publicMailSettings(db) });
   });
 
   socket.on('settings:testMail', async (

@@ -22,7 +22,7 @@ interface OverdueRow {
 }
 
 // Sends one "overdue" email per task and stamps overdueNotifiedAt. A task is only
-// stamped after a successful send, so SMTP failures and users without an email are
+// stamped after a successful send, so send failures and users without an email are
 // retried on the next pass.
 export async function runOverdueCheck(db: Database, mailer: Mailer, today: string): Promise<number> {
   if (!mailer.enabled) return 0;
