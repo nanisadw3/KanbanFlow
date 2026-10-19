@@ -2742,3 +2742,37 @@ body.dark-theme .prio-baja {
     animation: none;
   }
 }
+
+/* Login summary (new + overdue tasks) */
+.summary-intro {
+  margin: 0.25rem 0 0;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.summary-section {
+  margin-top: 1.1rem;
+}
+
+.summary-section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
+.summary-title-danger {
+  color: var(--color-danger);
+}
+
+.summary-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 38vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+}

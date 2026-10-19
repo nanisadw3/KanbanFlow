@@ -47,6 +47,10 @@ npm run dev       # Starts backend (Socket.io/SQLite on port 3001) + Vite dev se
 
 There's no session-based auth, and **there is no self-registration**: only an administrator can create users (admin panel → "Nuevo Usuario", which asks for the admin's own password; the server verifies it). Typing an unknown username at login shows "Ese usuario no existe". Admin accounts (role `admin`) log in with a password; regular users log in with just their username. A brand-new database starts with a single `admin` user (password `admin` — change it right away from the key button) so the first admin can create everyone else.
 
+## Login summary
+
+When someone logs in, a window lists their **overdue** tasks and the ones **assigned to them since their last visit**. It doesn't appear when there is nothing to report.
+
 ## Email notifications
 
 Notices are sent by the server through the **Gmail API** (HTTPS, port 443 — no SMTP) from a **single Gmail account** (not from each admin's own account):
@@ -63,6 +67,7 @@ One-time Google setup (Gmail account that will send): in Google Cloud create a p
 | `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` | OAuth client credentials from Google Cloud |
 | `GMAIL_REFRESH_TOKEN` | Refresh token authorizing `gmail.send` for the sending account |
 | `MAIL_FROM` | Optional sender name shown to recipients (Gmail forces the address to the authorized account) |
+| `APP_URL` | Optional public URL of the app (e.g. `https://kanban.empresa.com`); when set, the emails include an "Abrir KanbanFlow" button |
 | `TZ` | Time zone that decides when "today" rolls over (set it in Docker) |
 
 ```bash
@@ -104,7 +109,8 @@ server/
   index.ts        Express + Socket.io + SQLite server: schema, socket handlers, and (in
                   production) serves the built frontend from the same port.
   email.ts        Email validation.
-  mailer.ts       Gmail API sender (OAuth refresh token → access token → `messages.send`) + the two email templates.
+  mailer.ts       Gmail API sender (OAuth refresh token → access token → `messages.send`, multipart text + HTML).
+  emailTemplates.ts The HTML + plain-text emails (new task, overdue, test): emojis, greeting by first name, task card, countdown.
   overdue.ts      Periodic overdue-task check (sends each notice once).
   settings.ts     `settings` table: Gmail API config saved from the admin panel (overrides env vars).
   autocomplete.ts Rule that moves a task to "done" when its progress reaches 100.

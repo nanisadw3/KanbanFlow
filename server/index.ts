@@ -8,11 +8,11 @@ import path from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { scrypt as scryptCb, randomBytes, timingSafeEqual } from 'crypto';
 import { normalizeEmail } from './email.ts';
-import { createMailer, mailerFromConfig, newTaskMessage, type Mailer } from './mailer.ts';
+import { createMailer, mailerFromConfig, newTaskMessage, testMessage, type Mailer } from './mailer.ts';
 import { ensureSettingsTable, getSetting, setSetting, resolveMailConfig, saveMailConfig, publicMailSettings } from './settings.ts';
 import { autoCompleteAtFull } from './autocomplete.ts';
 import { validateNewUser, createUser, touchLogin } from './users.ts';
-import { createOverdueChecker, msUntilNextLocalMidnight } from './overdue.ts';
+import { createOverdueChecker, localToday, msUntilNextLocalMidnight } from './overdue.ts';
 
 interface Activity {
   id: string;
@@ -295,12 +295,14 @@ async function notifyNewTask(task: Activity) {
   );
   if (!assigner || !isAdminRow(assigner)) return;
   if (assigner.username.toLowerCase() === task.username.toLowerCase()) return;
-  const assignee = await db.get<{ email: string | null }>(
-    'SELECT email FROM users WHERE username = ? COLLATE NOCASE', [task.username]
+  const assignee = await db.get<{ email: string | null; fullName: string | null; username: string }>(
+    'SELECT email, fullName, username FROM users WHERE username = ? COLLATE NOCASE', [task.username]
   );
   if (!assignee?.email) return;
-  const { subject, text } = newTaskMessage(task, assigner.fullName || assigner.username);
-  await mailer.send(assignee.email, subject, text);
+  const { subject, text, html } = newTaskMessage(task, assigner.fullName || assigner.username, {
+    name: assignee.fullName || assignee.username, today: localToday(), appUrl: process.env.APP_URL,
+  });
+  await mailer.send(assignee.email, subject, text, html);
 }
 
 // Socket Connection handling
@@ -576,13 +578,10 @@ io.on('connection', async (socket) => {
     if (!admin) return reply(await failAuth('bad_password'));
     failedAuthAttempts = 0;
     if (!mailer.enabled) return reply({ ok: false, error: 'not_configured' });
-    const row = await db.get<{ email: string | null }>('SELECT email FROM users WHERE username = ?', [admin.username]);
+    const row = await db.get<{ email: string | null; fullName: string | null }>('SELECT email, fullName FROM users WHERE username = ?', [admin.username]);
     if (!row?.email) return reply({ ok: false, error: 'no_email' });
-    const result = await mailer.trySend(
-      row.email,
-      'Prueba de KanbanFlow',
-      'Si recibes este correo, la configuración de avisos de KanbanFlow funciona correctamente.'
-    );
+    const { subject, text, html } = testMessage({ name: row.fullName || admin.username, appUrl: process.env.APP_URL });
+    const result = await mailer.trySend(row.email, subject, text, html);
     reply({ ok: result.ok, error: result.ok ? undefined : 'send_failed', message: result.error, to: row.email });
   });
 

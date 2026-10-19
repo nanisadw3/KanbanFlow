@@ -19,6 +19,7 @@ interface OverdueRow {
   endDate: string;
   priority: string;
   email: string | null;
+  name: string | null;
 }
 
 // Sends one "overdue" email per task and stamps overdueNotifiedAt. A task is only
@@ -27,7 +28,7 @@ interface OverdueRow {
 export async function runOverdueCheck(db: Database, mailer: Mailer, today: string): Promise<number> {
   if (!mailer.enabled) return 0;
   const rows = await db.all<OverdueRow[]>(
-    `SELECT a.id, a.title, a.description, a.endDate, a.priority, u.email
+    `SELECT a.id, a.title, a.description, a.endDate, a.priority, u.email, COALESCE(u.fullName, u.username) AS name
        FROM activities a
        LEFT JOIN users u ON u.username = a.username COLLATE NOCASE
       WHERE a.endDate != '' AND a.endDate < ?
@@ -39,8 +40,8 @@ export async function runOverdueCheck(db: Database, mailer: Mailer, today: strin
   let sent = 0;
   for (const row of rows) {
     if (!row.email) continue;
-    const { subject, text } = overdueMessage(row);
-    if (!(await mailer.send(row.email, subject, text))) continue;
+    const { subject, text, html } = overdueMessage(row, { name: row.name ?? undefined, today, appUrl: process.env.APP_URL });
+    if (!(await mailer.send(row.email, subject, text, html))) continue;
     await db.run('UPDATE activities SET overdueNotifiedAt = ? WHERE id = ?', [new Date().toISOString(), row.id]);
     sent += 1;
   }

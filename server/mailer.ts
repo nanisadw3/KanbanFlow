@@ -1,3 +1,5 @@
+import { randomBytes } from 'crypto';
+
 export interface MailTask {
   title: string;
   description: string;
@@ -12,17 +14,17 @@ export interface SendResult {
 
 export interface Mailer {
   enabled: boolean;
-  send(to: string, subject: string, text: string): Promise<boolean>;
-  trySend(to: string, subject: string, text: string): Promise<SendResult>;
+  send(to: string, subject: string, text: string, html?: string): Promise<boolean>;
+  trySend(to: string, subject: string, text: string, html?: string): Promise<SendResult>;
 }
 
 type Transport = { sendMail(opts: any): Promise<unknown> };
 
 export function createMailer(transport: Transport | null, from: string): Mailer {
-  const trySend = async (to: string, subject: string, text: string): Promise<SendResult> => {
+  const trySend = async (to: string, subject: string, text: string, html?: string): Promise<SendResult> => {
     if (!transport) return { ok: false, error: 'Correo no configurado' };
     try {
-      await transport.sendMail({ from, to, subject, text });
+      await transport.sendMail({ from, to, subject, text, ...(html ? { html } : {}) });
       return { ok: true };
     } catch (err) {
       console.error('[Mailer] No se pudo enviar el correo a', to, err);
@@ -32,7 +34,7 @@ export function createMailer(transport: Transport | null, from: string): Mailer 
   return {
     enabled: transport !== null,
     trySend,
-    send: async (to, subject, text) => (await trySend(to, subject, text)).ok,
+    send: async (to, subject, text, html) => (await trySend(to, subject, text, html)).ok,
   };
 }
 
@@ -56,17 +58,27 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const oneLine = (s: string) => s.replace(/[\r\n]+/g, ' ').trim();
 const base64url = (b: Buffer) => b.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
-export function buildRawMessage(m: { from?: string; to: string; subject: string; text: string }): string {
+const wrap76 = (b64: string) => b64.replace(/.{1,76}/g, '$&\r\n');
+const b64Body = (s: string) => wrap76(Buffer.from(s).toString('base64'));
+
+// Plain text when there is no html; otherwise multipart/alternative with both, so clients
+// that can't (or won't) render HTML still show the text version.
+export function buildRawMessage(m: { from?: string; to: string; subject: string; text: string; html?: string }): string {
+  const boundary = `kf_${randomBytes(12).toString('hex')}`;
   const headers = [
     ...(m.from ? [`From: ${oneLine(m.from)}`] : []),
     `To: ${oneLine(m.to)}`,
     `Subject: =?UTF-8?B?${Buffer.from(oneLine(m.subject)).toString('base64')}?=`,
     'MIME-Version: 1.0',
-    'Content-Type: text/plain; charset=UTF-8',
-    'Content-Transfer-Encoding: base64',
   ];
-  const body = Buffer.from(m.text).toString('base64').replace(/.{1,76}/g, '$&\r\n');
-  return base64url(Buffer.from(`${headers.join('\r\n')}\r\n\r\n${body}`));
+  const part = (type: string, body: string) =>
+    `--${boundary}\r\nContent-Type: ${type}; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n${b64Body(body)}`;
+  const mime = m.html
+    ? [...headers, `Content-Type: multipart/alternative; boundary="${boundary}"`].join('\r\n') +
+      `\r\n\r\n${part('text/plain', m.text)}${part('text/html', m.html)}--${boundary}--\r\n`
+    : [...headers, 'Content-Type: text/plain; charset=UTF-8', 'Content-Transfer-Encoding: base64'].join('\r\n') +
+      `\r\n\r\n${b64Body(m.text)}`;
+  return base64url(Buffer.from(mime));
 }
 
 async function googleError(res: Response): Promise<string> {
@@ -102,11 +114,11 @@ export function createGmailTransport(
   };
 
   return {
-    async sendMail({ from, to, subject, text }) {
+    async sendMail({ from, to, subject, text, html }) {
       const res = await fetchFn(SEND_URL, {
         method: 'POST',
         headers: { Authorization: `Bearer ${await accessToken()}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ raw: buildRawMessage({ from, to, subject, text }) }),
+        body: JSON.stringify({ raw: buildRawMessage({ from, to, subject, text, html }) }),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
       if (!res.ok) {
@@ -135,26 +147,4 @@ export function mailerFromEnv(env: NodeJS.ProcessEnv = process.env): Mailer {
   });
 }
 
-export function newTaskMessage(task: MailTask, assignedByName: string) {
-  return {
-    subject: `Nueva tarea asignada: ${task.title}`,
-    text:
-      `${assignedByName} te asignó una nueva tarea en KanbanFlow.\n\n` +
-      `Tarea: ${task.title}\n` +
-      `Descripción: ${task.description || 'Sin descripción.'}\n` +
-      `Prioridad: ${task.priority}\n` +
-      `Fecha de fin: ${task.endDate}\n`,
-  };
-}
-
-export function overdueMessage(task: MailTask) {
-  return {
-    subject: `Tarea retrasada: ${task.title}`,
-    text:
-      `Tu tarea "${task.title}" está retrasada.\n\n` +
-      `Descripción: ${task.description || 'Sin descripción.'}\n` +
-      `Prioridad: ${task.priority}\n` +
-      `Debía terminar el: ${task.endDate}\n\n` +
-      `Entra a KanbanFlow para actualizarla.\n`,
-  };
-}
+export { newTaskMessage, overdueMessage, testMessage } from './emailTemplates.ts';

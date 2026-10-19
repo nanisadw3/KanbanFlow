@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createMailer, mailerFromEnv, mailerFromConfig, createGmailTransport, buildRawMessage, newTaskMessage, overdueMessage } from './mailer.ts';
+import { createMailer, mailerFromEnv, mailerFromConfig, createGmailTransport, buildRawMessage, newTaskMessage, overdueMessage, testMessage } from './mailer.ts';
 
 const task = { title: 'Entregar reporte', description: 'Reporte mensual', endDate: '2026-10-20', priority: 'alta' };
 
@@ -31,10 +31,61 @@ test('plantillas incluyen título, fecha y quién asignó', () => {
   const n = newTaskMessage(task, 'Roberto García');
   assert.match(n.subject, /Entregar reporte/);
   assert.match(n.text, /Roberto García/);
-  assert.match(n.text, /2026-10-20/);
+  assert.match(n.text, /martes 20 de octubre de 2026/);
+  assert.match(n.html, /Roberto García/);
   const o = overdueMessage(task);
   assert.match(o.subject, /retrasad/i);
   assert.match(o.text, /Entregar reporte/);
+});
+
+test('el saludo usa el primer nombre del destinatario', () => {
+  assert.match(newTaskMessage(task, 'Roberto', { name: 'Iñaki Sobera Sotomayor' }).text, /¡Hola, Iñaki! 👋/);
+  assert.match(newTaskMessage(task, 'Roberto').text, /¡Hola! 👋/);
+});
+
+test('tarea nueva: cuenta regresiva según la fecha de hoy', () => {
+  const at = (today: string) => newTaskMessage(task, 'R', { today }).text;
+  assert.match(at('2026-10-20'), /Vence hoy/);
+  assert.match(at('2026-10-19'), /Vence mañana/);
+  assert.match(at('2026-10-15'), /Tienes 5 días/);
+  assert.match(at('2026-10-25'), /ya pasó/);
+  assert.ok(!/para completarla|Vence|ya pasó/.test(newTaskMessage(task, 'R').text));
+});
+
+test('tarea retrasada: dice cuántos días de retraso lleva', () => {
+  assert.match(overdueMessage(task, { today: '2026-10-21' }).text, /venció ayer/);
+  const m = overdueMessage(task, { today: '2026-10-25' });
+  assert.match(m.text, /venció hace 5 días/);
+  assert.match(m.html, /Retraso: 5 días/);
+});
+
+test('el HTML escapa lo que viene de datos de usuario', () => {
+  const evil = { ...task, title: '<script>alert(1)</script>', description: 'a & <b>b</b>' };
+  const { html } = newTaskMessage(evil, '<img src=x>', { name: '"><svg>' });
+  assert.ok(!html.includes('<script>'));
+  assert.ok(!html.includes('<img src=x>'));
+  assert.ok(!html.includes('<svg>'));
+  assert.match(html, /&lt;script&gt;/);
+  assert.match(html, /a &amp; &lt;b&gt;b&lt;\/b&gt;/);
+});
+
+test('el botón solo aparece con una URL http(s) válida', () => {
+  assert.match(newTaskMessage(task, 'R', { appUrl: 'https://kanban.example.com' }).html, /Abrir KanbanFlow/);
+  assert.ok(!newTaskMessage(task, 'R').html.includes('Abrir KanbanFlow'));
+  assert.ok(!newTaskMessage(task, 'R', { appUrl: 'javascript:alert(1)' }).html.includes('Abrir KanbanFlow'));
+});
+
+test('el mensaje de prueba es amigable y trae HTML', () => {
+  const t = testMessage({ name: 'Ana López' });
+  assert.match(t.subject, /Prueba de KanbanFlow/);
+  assert.match(t.html, /¡Hola, Ana! 👋/);
+});
+
+test('send pasa el html al transporte solo cuando existe', async () => {
+  const sent: any[] = [];
+  const mailer = createMailer({ sendMail: async o => { sent.push(o); } }, 'k@x.com');
+  await mailer.send('a@x.com', 's', 't', '<p>hola</p>');
+  assert.equal(sent[0].html, '<p>hola</p>');
 });
 
 test('trySend devuelve el motivo del fallo', async () => {
@@ -63,6 +114,20 @@ test('buildRawMessage codifica asunto y cuerpo en UTF-8 y arma las cabeceras', (
   const subject = /^Subject: =\?UTF-8\?B\?(.+)\?=$/m.exec(head)![1];
   assert.equal(Buffer.from(subject, 'base64').toString('utf8'), 'Reunión ñandú');
   assert.equal(Buffer.from(body.replace(/\r\n/g, ''), 'base64').toString('utf8'), 'Acción: revisar');
+});
+
+test('buildRawMessage con html arma multipart/alternative con texto y HTML en UTF-8', () => {
+  const mime = decodeRaw(buildRawMessage({ to: 'ana@x.com', subject: 's', text: 'Hola 👋 texto', html: '<p>Hola 👋 html</p>' }));
+  assert.match(mime, /^Content-Type: multipart\/alternative; boundary="(kf_[0-9a-f]+)"$/m);
+  const boundary = /boundary="([^"]+)"/.exec(mime)![1];
+  const parts = mime.split(`--${boundary}`).slice(1, -1);
+  assert.equal(parts.length, 2);
+  const body = (p: string) => Buffer.from(p.split('\r\n\r\n')[1].replace(/\r\n/g, ''), 'base64').toString('utf8');
+  assert.match(parts[0], /text\/plain/);
+  assert.equal(body(parts[0]), 'Hola 👋 texto');
+  assert.match(parts[1], /text\/html/);
+  assert.equal(body(parts[1]), '<p>Hola 👋 html</p>');
+  assert.ok(mime.trimEnd().endsWith(`--${boundary}--`));
 });
 
 test('buildRawMessage omite From si no hay remitente y no deja inyectar cabeceras', () => {

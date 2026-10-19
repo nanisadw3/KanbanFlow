@@ -33,6 +33,7 @@ import './App.css';
 import { todayString, isOverdue as isOverdueOn, formatShortDate } from './dates';
 import { isLive, isDoneVisibleOnBoard as isDoneOnBoard, inArchivero, matchesTab, archiveTabCounts } from './archive';
 import type { ArchiveTab } from './archive';
+import { buildLoginSummary, type LoginSummary } from './summary';
 import { Icon, IconButton, Avatar, Meta, PriorityFlag, MiniTaskCard, TaskCardBody, FieldLabel, Segmented, Toast } from './ui';
 import { useToast } from './useToast';
 import { exportAllTasks } from './exportExcel';
@@ -93,6 +94,8 @@ function App() {
   const [passwordFormError, setPasswordFormError] = useState('');
   const [passwordFormSuccess, setPasswordFormSuccess] = useState(false);
   const [createUserError, setCreateUserError] = useState('');
+  // Shown right after logging in: tasks assigned since the previous login + overdue ones.
+  const [loginSummary, setLoginSummary] = useState<{ name: string; summary: LoginSummary } | null>(null);
   const [isMailModalOpen, setIsMailModalOpen] = useState(false);
   const [mailClientId, setMailClientId] = useState('');
   const [mailClientSecret, setMailClientSecret] = useState('');
@@ -345,6 +348,14 @@ function App() {
     }
   };
 
+  // `previousLogin` is read from the users list BEFORE this login touches it, so "new" means
+  // "assigned since the last time they were here".
+  const showLoginSummary = (loggedIn: User, previousLogin?: string) => {
+    const summary = buildLoginSummary(activities, loggedIn.username, previousLogin, today);
+    if (summary.fresh.length === 0 && summary.overdue.length === 0) return;
+    setLoginSummary({ name: (loggedIn.fullName || loggedIn.username).trim().split(/\s+/)[0], summary });
+  };
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
@@ -371,6 +382,7 @@ function App() {
       }
       const loggedIn = await loginUser(existingUser?.username ?? cleanUsername, existingUser?.fullName, 'admin');
       setUser(loggedIn);
+      showLoginSummary(loggedIn, existingUser?.lastLogin);
       setPasswordInput('');
       return;
     }
@@ -385,6 +397,7 @@ function App() {
 
     const loggedIn = await loginUser(existingUser.username, existingUser.fullName, existingUser.role);
     setUser(loggedIn);
+    showLoginSummary(loggedIn, existingUser.lastLogin);
   };
 
   const openCreateUserModal = () => {
@@ -2179,6 +2192,56 @@ function App() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Login summary: new + overdue tasks */}
+      {loginSummary && user && (
+        <div className="modal-overlay" onClick={() => setLoginSummary(null)}>
+          <div className="glass-panel modal-content animate-scale-in" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '520px' }}>
+            <div className="modal-header">
+              <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Icon name="waving_hand" style={{ color: 'var(--color-primary)' }} />
+                ¡Hola, {loginSummary.name}!
+              </h3>
+              <button type="button" className="modal-close" onClick={() => setLoginSummary(null)} aria-label="Cerrar">
+                <Icon name="close" />
+              </button>
+            </div>
+            <p className="summary-intro">Esto es lo que necesita tu atención hoy.</p>
+
+            {loginSummary.summary.overdue.length > 0 && (
+              <section className="summary-section">
+                <h4 className="summary-section-title summary-title-danger">
+                  <Icon name="alarm" size={18} /> Retrasadas ({loginSummary.summary.overdue.length})
+                </h4>
+                <div className="summary-list">
+                  {loginSummary.summary.overdue.map(a => (
+                    <MiniTaskCard key={a.id} act={a} today={today} overdue status={a.status} />
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {loginSummary.summary.fresh.length > 0 && (
+              <section className="summary-section">
+                <h4 className="summary-section-title">
+                  <Icon name="new_releases" size={18} /> Nuevas para ti ({loginSummary.summary.fresh.length})
+                </h4>
+                <div className="summary-list">
+                  {loginSummary.summary.fresh.map(a => (
+                    <MiniTaskCard key={a.id} act={a} today={today} overdue={false} status={a.status} />
+                  ))}
+                </div>
+              </section>
+            )}
+
+            <div className="modal-footer">
+              <button type="button" className="btn btn-primary" onClick={() => setLoginSummary(null)} style={{ width: 'auto' }}>
+                <Icon name="check" size={18} /> Entendido
+              </button>
+            </div>
           </div>
         </div>
       )}
