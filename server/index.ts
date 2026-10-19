@@ -12,6 +12,7 @@ import { createMailer, mailerFromConfig, newTaskMessage, testMessage, type Maile
 import { ensureSettingsTable, getSetting, setSetting, resolveMailConfig, saveMailConfig, publicMailSettings } from './settings.ts';
 import { autoCompleteAtFull } from './autocomplete.ts';
 import { validateNewUser, createUser, touchLogin } from './users.ts';
+import { changeUserRole } from './roles.ts';
 import { createOverdueChecker, localToday, msUntilNextLocalMidnight } from './overdue.ts';
 
 interface Activity {
@@ -583,6 +584,25 @@ io.on('connection', async (socket) => {
     const { subject, text, html } = testMessage({ name: row.fullName || admin.username, appUrl: process.env.APP_URL });
     const result = await mailer.trySend(row.email, subject, text, html);
     reply({ ok: result.ok, error: result.ok ? undefined : 'send_failed', message: result.error, to: row.email });
+  });
+
+  // Changing someone's role: needs an admin's username+password (checked here) AND that admin
+  // must be the role manager (see server/roles.ts) — being an admin is not enough.
+  socket.on('user:setRole', async (
+    payload: { adminUsername?: string; adminPassword?: string; username?: string; role?: string; password?: string },
+    ack?: (res: object) => void
+  ) => {
+    const reply = ack ?? (() => {});
+    const admin = await checkAdmin(payload?.adminUsername, payload?.adminPassword);
+    if (!admin) return reply(await failAuth('bad_password'));
+    failedAuthAttempts = 0;
+    const result = await changeUserRole(
+      db,
+      { manager: admin.username, username: payload.username, role: payload.role, password: payload.password },
+      { minPasswordLength: MIN_PASSWORD_LENGTH, hashPassword }
+    );
+    if (result.ok) await broadcastUsers();
+    reply(result);
   });
 
   // Team handlers

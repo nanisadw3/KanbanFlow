@@ -133,7 +133,7 @@ export const loginUser = async (username: string, fullName?: string, role?: 'adm
 
 // --- Admin passwords (verified by the server; hashes never reach the client) ---
 
-export type AuthResult = { ok: boolean; error?: 'bad_password' | 'too_short' | 'timeout' | 'invalid_email' | 'not_found' | 'exists' | 'invalid_username' | 'invalid_name' };
+export type AuthResult = { ok: boolean; error?: 'bad_password' | 'too_short' | 'timeout' | 'invalid_email' | 'not_found' | 'exists' | 'invalid_username' | 'invalid_name' | 'forbidden' | 'invalid_role' | 'protected' | 'self' | 'password_required' };
 
 const emitWithAck = (event: string, payload: object): Promise<AuthResult> =>
   new Promise(resolve => {
@@ -147,6 +147,12 @@ export const loginAdmin = (username: string, password: string): Promise<AuthResu
 
 export const changeAdminPassword = (username: string, currentPassword: string, newPassword: string): Promise<AuthResult> =>
   emitWithAck('auth:changePassword', { username, currentPassword, newPassword });
+
+// Changing a role needs the admin's username + password, and the server only accepts it from
+// the role manager ("Inaki"). Promoting to admin also needs a password for the new admin.
+export const setUserRole = (payload: {
+  adminUsername: string; adminPassword: string; username: string; role: 'admin' | 'user'; password?: string;
+}): Promise<AuthResult> => emitWithAck('user:setRole', payload);
 
 // Creating a user needs an admin's username + password; the server verifies them.
 export const createUserByAdmin = (payload: {

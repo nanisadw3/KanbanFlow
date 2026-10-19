@@ -45,6 +45,8 @@ npm run dev       # Starts backend (Socket.io/SQLite on port 3001) + Vite dev se
 
 ### Logging in
 
+Only the account **Inaki** can change roles (admin panel → *Cambiar rol de usuario*): pick a user, choose **Usuario** or **Administrador**, and confirm with their own password. Promoting someone asks for a password for the new admin.
+
 There's no session-based auth, and **there is no self-registration**: only an administrator can create users (admin panel → "Nuevo Usuario", which asks for the admin's own password; the server verifies it). Typing an unknown username at login shows "Ese usuario no existe". Admin accounts (role `admin`) log in with a password; regular users log in with just their username. A brand-new database starts with a single `admin` user (password `admin` — change it right away from the key button) so the first admin can create everyone else.
 
 ## Login summary

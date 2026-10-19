@@ -9,6 +9,7 @@ import {
   loginAdmin,
   changeAdminPassword,
   createUserByAdmin,
+  setUserRole,
   setUserEmail,
   getMailSettings,
   saveMailSettings,
@@ -96,6 +97,14 @@ function App() {
   const [createUserError, setCreateUserError] = useState('');
   // Shown right after logging in: tasks assigned since the previous login + overdue ones.
   const [loginSummary, setLoginSummary] = useState<{ name: string; summary: LoginSummary } | null>(null);
+  // Role manager modal (only the user "Inaki" gets the button; the server enforces it too).
+  const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
+  const [roleTarget, setRoleTarget] = useState('');
+  const [roleChoice, setRoleChoice] = useState<'admin' | 'user'>('user');
+  const [roleNewPassword, setRoleNewPassword] = useState('');
+  const [roleAdminPass, setRoleAdminPass] = useState('');
+  const [roleBusy, setRoleBusy] = useState(false);
+  const [roleMsg, setRoleMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [isMailModalOpen, setIsMailModalOpen] = useState(false);
   const [mailClientId, setMailClientId] = useState('');
   const [mailClientSecret, setMailClientSecret] = useState('');
@@ -398,6 +407,59 @@ function App() {
     const loggedIn = await loginUser(existingUser.username, existingUser.fullName, existingUser.role);
     setUser(loggedIn);
     showLoginSummary(loggedIn, existingUser.lastLogin);
+  };
+
+  const openRoleModal = () => {
+    setRoleTarget('');
+    setRoleChoice('user');
+    setRoleNewPassword('');
+    setRoleAdminPass('');
+    setRoleMsg(null);
+    setIsRoleModalOpen(true);
+  };
+
+  const roleOf = (username: string): 'admin' | 'user' =>
+    users.find(u => u.username === username)?.role === 'admin' ? 'admin' : 'user';
+
+  const handleRoleTargetChange = (username: string) => {
+    setRoleTarget(username);
+    setRoleNewPassword('');
+    setRoleMsg(null);
+    if (username) setRoleChoice(roleOf(username));
+  };
+
+  const handleSaveRole = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !roleTarget) return;
+    if (roleChoice === 'admin' && roleOf(roleTarget) !== 'admin' && roleNewPassword.length < 4) {
+      setRoleMsg({ ok: false, text: 'La contraseña del nuevo administrador debe tener al menos 4 caracteres.' });
+      return;
+    }
+    setRoleBusy(true);
+    setRoleMsg(null);
+    const res = await setUserRole({
+      adminUsername: user.username, adminPassword: roleAdminPass,
+      username: roleTarget, role: roleChoice,
+      password: roleChoice === 'admin' ? roleNewPassword : undefined,
+    });
+    setRoleBusy(false);
+    if (!res.ok) {
+      const messages: Record<string, string> = {
+        bad_password: 'Tu contraseña de administrador es incorrecta.',
+        forbidden: 'Solo el administrador principal puede cambiar roles.',
+        password_required: 'Escribe una contraseña para el nuevo administrador.',
+        too_short: 'La contraseña del nuevo administrador debe tener al menos 4 caracteres.',
+        protected: 'El rol de la cuenta "admin" no se puede cambiar.',
+        self: 'No puedes cambiar tu propio rol.',
+        not_found: 'Ese usuario ya no existe.',
+        timeout: 'No se pudo conectar con el servidor.',
+      };
+      setRoleMsg({ ok: false, text: messages[res.error ?? ''] ?? 'No se pudo cambiar el rol.' });
+      return;
+    }
+    const target = users.find(u => u.username === roleTarget);
+    showToast(`${target?.fullName || roleTarget} ahora es ${roleChoice === 'admin' ? 'administrador' : 'usuario'}.`, true);
+    setIsRoleModalOpen(false);
   };
 
   const openCreateUserModal = () => {
@@ -832,6 +894,16 @@ function App() {
   };
 
   // Filter activities based on user role and selected filter
+  // A role change made elsewhere reaches the live users list; mirror it onto the session so
+  // the panel (and what it lets them do) updates without logging in again.
+  useEffect(() => {
+    if (!user) return;
+    const fresh = users.find(u => u.username.toLowerCase() === user.username.toLowerCase());
+    if (fresh && (fresh.role ?? undefined) !== (user.role ?? undefined)) {
+      setUser(prev => prev && { ...prev, role: fresh.role ?? undefined });
+    }
+  }, [users, user]);
+
   const isAdmin = user?.username.toLowerCase() === 'admin' || user?.role === 'admin';
 
   // Every user must have an email (it's where task notices are sent). Whoever is
@@ -1073,6 +1145,9 @@ function App() {
               <IconButton icon="key" label="Cambiar mi contraseña" onClick={openPasswordModal} />
               <IconButton icon="forward_to_inbox" label="Correo de avisos" onClick={() => void openMailModal()} />
               <IconButton icon="person_add" label="Nuevo usuario" onClick={openCreateUserModal} />
+              {user.username.toLowerCase() === 'inaki' && (
+                <IconButton icon="manage_accounts" label="Cambiar rol de usuario" onClick={openRoleModal} />
+              )}
               <IconButton icon="download" label="Exportar a Excel" onClick={() => void handleExportExcel()} disabled={isExporting} />
             </>
           )}
@@ -2242,6 +2317,95 @@ function App() {
                 <Icon name="check" size={18} /> Entendido
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Role manager (only Inaki) */}
+      {isRoleModalOpen && user && (
+        <div className="modal-overlay" onClick={() => setIsRoleModalOpen(false)}>
+          <div className="glass-panel modal-content animate-scale-in" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '460px' }}>
+            <div className="modal-header">
+              <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Icon name="manage_accounts" style={{ color: 'var(--color-primary)' }} />
+                Cambiar rol de usuario
+              </h3>
+              <button type="button" className="modal-close" onClick={() => setIsRoleModalOpen(false)} aria-label="Cerrar">
+                <Icon name="close" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveRole} style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div className="form-group">
+                <FieldLabel icon="person">Usuario</FieldLabel>
+                <select className="form-input" value={roleTarget} onChange={(e) => handleRoleTargetChange(e.target.value)} required>
+                  <option value="">Selecciona un usuario…</option>
+                  {users
+                    .filter(u => u.username.toLowerCase() !== 'admin' && u.username.toLowerCase() !== user.username.toLowerCase())
+                    .map(u => (
+                      <option key={u.username} value={u.username}>
+                        {(u.fullName || u.username)} (@{u.username}) · {u.role === 'admin' ? 'Administrador' : 'Usuario'}
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              <fieldset className="role-radio-group" disabled={!roleTarget}>
+                <legend><FieldLabel icon="shield_person">Rol</FieldLabel></legend>
+                <label className="role-radio">
+                  <input type="radio" name="role" value="user" checked={roleChoice === 'user'} onChange={() => setRoleChoice('user')} />
+                  <span>Usuario</span>
+                </label>
+                <label className="role-radio">
+                  <input type="radio" name="role" value="admin" checked={roleChoice === 'admin'} onChange={() => setRoleChoice('admin')} />
+                  <span>Administrador</span>
+                </label>
+              </fieldset>
+
+              {roleTarget && roleChoice === 'admin' && roleOf(roleTarget) !== 'admin' && (
+                <div className="form-group">
+                  <FieldLabel icon="lock">Contraseña para el nuevo administrador</FieldLabel>
+                  <input
+                    type="password"
+                    className="form-input"
+                    placeholder="Mínimo 4 caracteres"
+                    autoComplete="new-password"
+                    value={roleNewPassword}
+                    onChange={(e) => setRoleNewPassword(e.target.value)}
+                    required
+                  />
+                </div>
+              )}
+
+              <div className="form-group">
+                <FieldLabel icon="admin_panel_settings">Tu contraseña de administrador</FieldLabel>
+                <input
+                  type="password"
+                  className="form-input"
+                  placeholder="Necesaria para confirmar el cambio"
+                  autoComplete="current-password"
+                  value={roleAdminPass}
+                  onChange={(e) => setRoleAdminPass(e.target.value)}
+                  required
+                />
+              </div>
+
+              {roleMsg && <p className={roleMsg.ok ? undefined : 'form-error'} style={{ margin: 0, fontSize: '0.85rem' }}>{roleMsg.text}</p>}
+
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setIsRoleModalOpen(false)} style={{ width: 'auto' }}>
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={roleBusy || !roleTarget || roleChoice === roleOf(roleTarget)}
+                  style={{ width: 'auto' }}
+                >
+                  Guardar cambio
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
