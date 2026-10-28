@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeEmail, isValidEmail } from './email.ts';
+import { normalizeEmail } from './email.ts';
 
 test('normalizeEmail recorta espacios y acepta correos válidos', () => {
   assert.equal(normalizeEmail('  Ana@Mail.com '), 'Ana@Mail.com');
@@ -11,9 +11,4 @@ test('normalizeEmail rechaza valores inválidos', () => {
   for (const bad of ['', '   ', 'sinarroba', 'a@b', '@x.com', 'a@ x.com', 'a b@x.com', null, undefined, 42]) {
     assert.equal(normalizeEmail(bad), null, String(bad));
   }
-});
-
-test('isValidEmail refleja normalizeEmail', () => {
-  assert.equal(isValidEmail('ok@x.com'), true);
-  assert.equal(isValidEmail('nope'), false);
 });

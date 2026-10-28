@@ -62,6 +62,8 @@ const BLUE: Theme = { header: '#4f46e5', headerText: '#e0e7ff', soft: '#eef2ff',
 const RED: Theme = { header: '#dc2626', headerText: '#fee2e2', soft: '#fef2f2', accent: '#dc2626' };
 const GREEN: Theme = { header: '#059669', headerText: '#d1fae5', soft: '#ecfdf5', accent: '#059669' };
 
+const PURPLE: Theme = { header: '#6d43c7', headerText: '#ede9fe', soft: '#f5f3ff', accent: '#6d43c7' };
+
 interface Layout {
   subject: string;
   preheader: string;
@@ -72,6 +74,7 @@ interface Layout {
   intro: string;
   task?: MailTask;
   highlight?: string; // the date/countdown line, with its own emoji
+  quote?: string;     // a comment shown as a quote under the intro (user text: escaped like everything else)
   closing: string;
   appUrl?: string;
 }
@@ -87,10 +90,13 @@ function renderHtml(l: Layout): string {
             <div style="font-size:24px;line-height:1.3;font-weight:800;color:#0f172a;margin:6px 0 10px 0;">${esc(l.task.title)}</div>
             <div style="font-size:16px;line-height:1.6;color:#475569;margin-bottom:16px;">${l.task.description ? esc(l.task.description).replace(/\n/g, '<br>') : 'Sin descripción por ahora.'}</div>
             <span style="display:inline-block;background:${prio.bg};color:${prio.color};font-size:14px;font-weight:700;padding:6px 14px;border-radius:999px;">${prio.emoji} Prioridad ${esc(prio.label)}</span>
-            <span style="display:inline-block;background:#ffffff;color:#334155;font-size:14px;font-weight:700;padding:6px 14px;border-radius:999px;margin-left:6px;">📅 ${esc(formatLongDate(l.task.endDate))}</span>
+            ${l.task.endDate ? `<span style="display:inline-block;background:#ffffff;color:#334155;font-size:14px;font-weight:700;padding:6px 14px;border-radius:999px;margin-left:6px;">📅 ${esc(formatLongDate(l.task.endDate))}</span>` : ''}
           </td></tr>
         </table>
       </td></tr>`
+    : '';
+  const quoteBlock = l.quote
+    ? `<tr><td style="padding:8px 32px 0 32px;"><div style="border-left:4px solid ${l.theme.accent};background:${l.theme.soft};border-radius:0 12px 12px 0;padding:14px 18px;font-size:16px;line-height:1.6;color:#334155;font-style:italic;">“${esc(l.quote).replace(/\n/g, '<br>')}”</div></td></tr>`
     : '';
   const highlight = l.highlight
     ? `<tr><td style="padding:20px 32px 0 32px;"><div style="font-size:18px;font-weight:700;color:${l.theme.accent};">${esc(l.highlight)}</div></td></tr>`
@@ -115,6 +121,7 @@ function renderHtml(l: Layout): string {
     <div style="font-size:22px;font-weight:800;color:#0f172a;">${esc(l.greeting)}</div>
     <div style="font-size:17px;line-height:1.65;color:#334155;margin-top:10px;">${esc(l.intro)}</div>
   </td></tr>
+  ${quoteBlock}
   ${taskCard}
   ${highlight}
   <tr><td style="padding:22px 32px 0 32px;"><div style="font-size:17px;line-height:1.65;color:#334155;">${esc(l.closing)}</div></td></tr>
@@ -133,13 +140,14 @@ function renderText(l: Layout): string {
     '',
     l.greeting,
     l.intro,
+    ...(l.quote ? ['', `💬 “${l.quote}”`] : []),
     ...(l.task && prio
       ? [
           '',
           `📝 Tarea: ${l.task.title}`,
           `🗒️ Descripción: ${l.task.description || 'Sin descripción por ahora.'}`,
           `${prio.emoji} Prioridad: ${prio.label}`,
-          `📅 Fecha de fin: ${formatLongDate(l.task.endDate)}`,
+          ...(l.task.endDate ? [`📅 Fecha de fin: ${formatLongDate(l.task.endDate)}`] : []),
         ]
       : []),
     ...(l.highlight ? ['', l.highlight] : []),
@@ -156,7 +164,8 @@ function build(l: Layout): MailMessage {
 }
 
 function countdown(endDate: string, today?: string): string | undefined {
-  if (!today) return undefined;
+  // A repeating task has no end date, so there is nothing to count down to.
+  if (!today || !endDate) return undefined;
   const d = daysBetween(today, endDate);
   if (d < 0) return '⚠️ Ojo: la fecha de entrega ya pasó';
   if (d === 0) return '⏳ ¡Vence hoy! Todavía estás a tiempo';
@@ -176,6 +185,53 @@ export function newTaskMessage(task: MailTask, assignedByName: string, o: Messag
     task,
     highlight: countdown(task.endDate, o.today),
     closing: 'Entra a KanbanFlow para ver todo con calma y mantener tu avance al día. ¡Tú puedes con esto! 💪✨',
+    appUrl: o.appUrl,
+  });
+}
+
+// `participants` are the display names of everyone the task was shared with. `o.participant` is
+// false for an administrator who only gets the notice.
+export function sharedTaskMessage(
+  task: MailTask,
+  createdByName: string,
+  participants: string[],
+  o: MessageOptions & { participant?: boolean } = {}
+): MailMessage {
+  const who = participants.join(', ');
+  const isParticipant = o.participant !== false;
+  return build({
+    subject: `🤝 Nueva tarea compartida: ${task.title}`,
+    preheader: `${createdByName} creó una tarea compartida con ${participants.length} ${participants.length === 1 ? 'persona' : 'personas'}.`,
+    theme: PURPLE,
+    emoji: '🤝',
+    heading: '¡Nueva tarea compartida!',
+    greeting: hello(o.name),
+    intro: isParticipant
+      ? `${createdByName} creó una tarea compartida y tú formas parte del grupo: ${who}. Cada quien lleva su propio avance y el equipo ve el promedio 👇`
+      : `${createdByName} creó una tarea compartida entre ${who}. Te avisamos porque eres administrador 👇`,
+    task,
+    highlight: countdown(task.endDate, o.today),
+    closing: isParticipant
+      ? 'Entra a KanbanFlow, actualiza tu avance y deja comentarios para que todo el grupo esté al tanto. ¡A trabajar en equipo! 💜'
+      : 'Puedes seguir el avance de cada persona y los comentarios desde KanbanFlow. 💜',
+    appUrl: o.appUrl,
+  });
+}
+
+// A participant commented on a shared task. Only the first unread comment of each person is emailed
+// (see commentRecipients), so this reads as "there is news", not as a transcript.
+export function commentMessage(task: MailTask, authorName: string, text: string, o: MessageOptions = {}): MailMessage {
+  const excerpt = text.length > 400 ? `${text.slice(0, 400).trimEnd()}…` : text;
+  return build({
+    subject: `💬 ${authorName} comentó en: ${task.title}`,
+    preheader: `${authorName} dejó un comentario en una tarea compartida contigo.`,
+    theme: PURPLE,
+    emoji: '💬',
+    heading: 'Nuevo comentario',
+    greeting: hello(o.name),
+    intro: `${authorName} comentó en la tarea compartida "${task.title}":`,
+    quote: excerpt,
+    closing: 'Entra a KanbanFlow para leer la conversación y responder. Si llegan más comentarios, los verás marcados en la tarea (no te enviaremos otro correo hasta que leas este). 💜',
     appUrl: o.appUrl,
   });
 }

@@ -6,4 +6,3 @@ export function normalizeEmail(raw: unknown): string | null {
   return EMAIL_RE.test(email) ? email : null;
 }
 
-export const isValidEmail = (raw: unknown): boolean => normalizeEmail(raw) !== null;

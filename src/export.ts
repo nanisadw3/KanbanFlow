@@ -1,8 +1,9 @@
 import type { Activity, User, Team } from './db';
 import { isOverdue, daysOverdue } from './dates';
 
-// Pure data behind the Excel export (tested in server/export.test.ts): the NON-archived tasks of
-// every user, grouped per person, with Spanish labels and the overdue flag/days computed.
+// Pure data behind the Excel export (tested in server/export.test.ts): the tasks of every user,
+// grouped per person, with Spanish labels and the overdue flag/days computed. By default only the
+// NON-archived ones; `includeArchived` adds the archived ones too (and an "Archivada" column).
 
 const STATUS_LABEL: Record<Activity['status'], string> = { todo: 'Por hacer', doing: 'En curso', done: 'Hecha', cancelled: 'Cancelada' };
 const STATUS_ORDER: Record<Activity['status'], number> = { todo: 0, doing: 1, done: 2, cancelled: 3 };
@@ -25,6 +26,7 @@ export interface ExportTaskRow {
   scope: string;          // team name, or "Personal"
   createdAt: string;      // ISO
   completedAt: string;    // ISO or ''
+  archived: boolean;
 }
 
 export interface SummaryRow {
@@ -37,6 +39,7 @@ export interface SummaryRow {
   cancelled: number;
   total: number;
   overdue: number;
+  archived: number;       // how many of their exported tasks are archived (0 unless archived ones are included)
   rate: number;           // % of their exported tasks that are done
 }
 
@@ -51,6 +54,7 @@ export interface ExportData {
   summary: SummaryRow[];
   tasks: ExportTaskRow[];
   byUser: UserSheet[];
+  includesArchived: boolean; // the archived tasks were asked for: the sheets get an "Archivada" column
 }
 
 // Excel sheet names: max 31 chars, none of \ / ? * [ ] :, unique case-insensitively.
@@ -66,8 +70,8 @@ export function safeSheetName(name: string, used: Set<string>, reserved: string[
   return candidate;
 }
 
-export function buildExportData(input: { activities: Activity[]; users: User[]; teams: Team[]; today: string }): ExportData {
-  const { activities, users, teams, today } = input;
+export function buildExportData(input: { activities: Activity[]; users: User[]; teams: Team[]; today: string; includeArchived?: boolean }): ExportData {
+  const { activities, users, teams, today, includeArchived = false } = input;
   const people = users
     .filter(u => u.username.toLowerCase() !== 'admin')
     .map(u => ({ username: u.username, userName: u.fullName || u.username, email: u.email || '' }))
@@ -80,8 +84,9 @@ export function buildExportData(input: { activities: Activity[]; users: User[]; 
 
   for (const p of people) {
     const mine = activities
-      .filter(a => !a.archived && a.username.toLowerCase() === p.username.toLowerCase())
-      .sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || a.endDate.localeCompare(b.endDate));
+      .filter(a => (includeArchived || !a.archived) && a.username.toLowerCase() === p.username.toLowerCase())
+      // current tasks first, archived ones after them; then by status and end date
+      .sort((a, b) => Number(!!a.archived) - Number(!!b.archived) || STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || a.endDate.localeCompare(b.endDate));
 
     const rows: ExportTaskRow[] = mine.map(a => {
       const late = isOverdue(a, today);
@@ -102,6 +107,7 @@ export function buildExportData(input: { activities: Activity[]; users: User[]; 
         scope: teamName(a.teamId),
         createdAt: a.createdAt,
         completedAt: a.completedAt || '',
+        archived: !!a.archived,
       };
     });
 
@@ -116,6 +122,7 @@ export function buildExportData(input: { activities: Activity[]; users: User[]; 
       cancelled: count('cancelled'),
       total: mine.length,
       overdue: rows.filter(r => r.overdue).length,
+      archived: rows.filter(r => r.archived).length,
       rate: mine.length === 0 ? 0 : Math.round((count('done') / mine.length) * 100),
     });
     if (rows.length > 0) {
@@ -123,5 +130,5 @@ export function buildExportData(input: { activities: Activity[]; users: User[]; 
     }
   }
 
-  return { summary, tasks: byUser.flatMap(u => u.rows), byUser };
+  return { summary, tasks: byUser.flatMap(u => u.rows), byUser, includesArchived: includeArchived };
 }

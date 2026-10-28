@@ -37,6 +37,12 @@
   --color-danger: #b0211a;
   --color-danger-rgb: 176, 33, 26;
 
+  /* Task kinds: shared (violet) and repeating (teal). Both >= 4.5:1 on the page and the cards. */
+  --color-shared: #6a3db8;
+  --color-shared-rgb: 106, 61, 184;
+  --color-recurring: #0e6663;
+  --color-recurring-rgb: 14, 102, 99;
+
   /* Chart fills — same status hues, validated against each surface (see dataviz skill) */
   --chart-todo: #b45309;
   --chart-doing: #3b5bdb;
@@ -92,6 +98,11 @@ body.dark-theme {
 
   --color-danger: #f28b82;
   --color-danger-rgb: 242, 139, 130;
+
+  --color-shared: #c9b0f7;
+  --color-shared-rgb: 201, 176, 247;
+  --color-recurring: #7fd6cf;
+  --color-recurring-rgb: 127, 214, 207;
 
   --chart-todo: #d97706;
   --chart-doing: #5b7ce8;

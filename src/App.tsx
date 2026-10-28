@@ -1,10 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import {
-  initDB,
   subscribeActivities,
   subscribeUsers,
   subscribeTeams,
   subscribePresence,
+  subscribeComments,
+  subscribeCommentReads,
+  markCommentsRead,
+  setSharedParticipants,
   loginUser,
   loginAdmin,
   changeAdminPassword,
@@ -15,6 +18,9 @@ import {
   saveMailSettings,
   testMailSettings,
   addActivity,
+  addSharedActivity,
+  addComment,
+  stopSeries,
   updateActivityStatus,
   setActivityArchived,
   updateActivity,
@@ -27,17 +33,22 @@ import {
   heartbeat,
   clearPresence,
   isPresenceFresh,
+  updateProfile,
+  avatarUrl,
 } from './db';
-import type { Activity, User, Team, PresenceEntry } from './db';
+import type { Activity, User, Team, PresenceEntry, TaskComment, CommentRead } from './db';
 // Using Material Symbols Rounded via Google Fonts, no Lucide React imports needed
 import './App.css';
-import { todayString, isOverdue as isOverdueOn, formatShortDate } from './dates';
+import { todayString, isOverdue as isOverdueOn, daysOverdue, formatShortDate } from './dates';
 import { isLive, isDoneVisibleOnBoard as isDoneOnBoard, inArchivero, matchesTab, archiveTabCounts } from './archive';
 import type { ArchiveTab } from './archive';
 import { buildLoginSummary, type LoginSummary } from './summary';
-import { Icon, IconButton, Avatar, Meta, PriorityFlag, MiniTaskCard, TaskCardBody, FieldLabel, Segmented, Toast } from './ui';
+import { Icon, IconButton, Avatar, Meta, PriorityFlag, MiniTaskCard, TaskCardBody, TaskDates, FieldLabel, Segmented, Toast } from './ui';
+import { REPEAT_OPTIONS, WEEKDAYS, MONTH_NAMES, usesWeekday, dayFor, describeRepeat, kindClass, sharedGroup, sharedProgress, copyProgress, unreadComments } from './taskKinds';
+import type { TaskKind, Repeat, SharedStats } from './taskKinds';
 import { useToast } from './useToast';
-import { exportAllTasks } from './exportExcel';
+import ExportDialog from './ExportDialog';
+import { fileToAvatarDataUrl } from './imageUtils';
 import { isFilterActive, summarizeMatches, describeMatches } from './filters';
 import StatsPage from './StatsPage';
 
@@ -52,7 +63,7 @@ function App() {
   const [errorMsg, setErrorMsg] = useState('');
   const [currentView, setCurrentView] = useState<'board' | 'stats'>('board');
 
-  // Kanban and Activities state — kept live by Firestore subscriptions, see
+  // Kanban and Activities state — kept live by the socket subscriptions, see
   // the sync effect below, so edits from any other tab/device appear here
   // automatically without any manual refresh.
   const [activities, setActivities] = useState<Activity[]>([]);
@@ -73,10 +84,26 @@ function App() {
   const [status, setStatus] = useState<'todo' | 'doing' | 'done' | 'cancelled'>('todo');
   const [priority, setPriority] = useState<'alta' | 'media' | 'baja'>('media');
   const [progress, setProgress] = useState<number>(50);
+  // Kind of task being created/edited: a normal one, one shared with several people, or a repeating one.
+  const [taskType, setTaskType] = useState<TaskKind>('single');
+  const [sharedWith, setSharedWith] = useState<Set<string>>(new Set());
+  const [repeat, setRepeat] = useState<Repeat>('weekly');
+  const [repeatDay, setRepeatDay] = useState(1);     // weekday 1-5, or day of the month
+  const [repeatMonth, setRepeatMonth] = useState(1);  // only for yearly
+  const [modalError, setModalError] = useState('');
+  const [comments, setComments] = useState<TaskComment[]>([]);
+  const [commentReads, setCommentReads] = useState<CommentRead[]>([]);
+  const [commentText, setCommentText] = useState('');
+  const [commentBusy, setCommentBusy] = useState(false);
+  // The shared task whose comments panel is open (opened by clicking its card).
+  const [commentsForId, setCommentsForId] = useState<string | null>(null);
+  // Value of the progress slider in the comments panel while it is being dragged / waiting to be saved.
+  const [ownDraft, setOwnDraft] = useState<{ id: string; value: number } | null>(null);
+  const ownTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [targetAssignee, setTargetAssignee] = useState<string>('');  // Admin filter
   const [viewingUserAsAdmin, setViewingUserAsAdmin] = useState<User | null>(null);
   const [overdueOnly, setOverdueOnly] = useState(false); // admin: also require "overdue"
-  const [teamsExpanded, setTeamsExpanded] = useState(true); // Equipos panel expanded/collapsed state
+  const [teamsExpanded, setTeamsExpanded] = useState(false); // Equipos panel: minimized by default, "Todos" expands it
   const [activeStatusFilters, setActiveStatusFilters] = useState<Set<'todo' | 'doing' | 'done' | 'cancelled'>>(new Set());
   const [activeUserFilters, setActiveUserFilters] = useState<Set<string>>(new Set());
   const [isUsersPanelOpen, setIsUsersPanelOpen] = useState(false);
@@ -105,6 +132,16 @@ function App() {
   const [roleAdminPass, setRoleAdminPass] = useState('');
   const [roleBusy, setRoleBusy] = useState(false);
   const [roleMsg, setRoleMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // Profile modal (click on your avatar): photo, display name, username and email.
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [profName, setProfName] = useState('');
+  const [profUsername, setProfUsername] = useState('');
+  const [profEmail, setProfEmail] = useState('');
+  const [profPassword, setProfPassword] = useState('');
+  const [profPhoto, setProfPhoto] = useState<string | null | undefined>(undefined); // undefined = unchanged
+  const [profBusy, setProfBusy] = useState(false);
+  const [profError, setProfError] = useState('');
+  const photoInputRef = useRef<HTMLInputElement>(null);
   const [isMailModalOpen, setIsMailModalOpen] = useState(false);
   const [mailClientId, setMailClientId] = useState('');
   const [mailClientSecret, setMailClientSecret] = useState('');
@@ -139,7 +176,7 @@ function App() {
 
   // History of completed tasks
   const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
+  const [isExportOpen, setIsExportOpen] = useState(false); // "¿solo las actuales o también archivadas?"
   const { toast, show: showToast } = useToast();
   const [archiveTab, setArchiveTab] = useState<ArchiveTab>('all');
 
@@ -173,15 +210,6 @@ function App() {
     message: '',
     onConfirm: () => {}
   });
-
-  // Admin: every user's NON-archived tasks to an .xlsx (Resumen + Todas + one sheet per person).
-  const handleExportExcel = async () => {
-    if (isExporting) return;
-    setIsExporting(true);
-    const result = await exportAllTasks({ activities, users, teams, today });
-    setIsExporting(false);
-    showToast(result.message, result.ok);
-  };
 
   const showConfirm = (title: string, message: string, onConfirm: () => void) => {
     setConfirmConfig({
@@ -252,24 +280,39 @@ function App() {
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
-  // Real-time data sync: seeds Firebase once if empty, then subscribes to
-  // live updates for activities/users/teams/presence. Every write anyone
-  // makes (any tab, any device, same Firebase project) flows back through
-  // these listeners automatically — this is what makes the whole app
-  // multi-user in real time instead of just localStorage-per-browser.
+  // Real-time data sync: subscribes to live updates for activities/users/teams/presence/comments.
+  // Every write anyone makes (any tab, any device) is broadcast by the server and flows back through
+  // these listeners automatically — this is what makes the whole app multi-user in real time.
   useEffect(() => {
-    void initDB();
     const unsubActivities = subscribeActivities(setActivities);
     const unsubUsers = subscribeUsers(setUsers);
     const unsubTeams = subscribeTeams(setTeams);
     const unsubPresence = subscribePresence(setPresence);
+    const unsubComments = subscribeComments(setComments);
+    const unsubCommentReads = subscribeCommentReads(setCommentReads);
     return () => {
       unsubActivities();
       unsubUsers();
       unsubTeams();
       unsubPresence();
+      unsubComments();
+      unsubCommentReads();
     };
   }, []);
+
+  // Having a shared task's comments in front of you (the comments panel, or the editor of a shared
+  // task) marks them read for you, including ones that arrive while it is open. Only people who have
+  // their own copy of the task track reads (an admin looking at someone else's board doesn't).
+  const openSharedId = (commentsForId ? activities.find(a => a.id === commentsForId)?.sharedId : undefined)
+    ?? (isModalOpen && modalMode === 'edit' && selectedActivity?.kind === 'shared' ? selectedActivity.sharedId : undefined);
+  useEffect(() => {
+    if (!user || !openSharedId) return;
+    const mine = activities.find(a => a.sharedId === openSharedId && a.username.toLowerCase() === user.username.toLowerCase());
+    if (!mine) return;
+    if (unreadComments(comments, commentReads, { sharedId: openSharedId, myCopyCreatedAt: mine.createdAt }, user.username) > 0) {
+      void markCommentsRead(user.username, openSharedId);
+    }
+  }, [openSharedId, comments, commentReads, activities, user]);
 
   useEffect(() => {
     if (theme === 'dark') {
@@ -285,10 +328,10 @@ function App() {
   // Lock background scroll while any modal is open, so the modal is always
   // immediately visible instead of requiring the page to be scrolled first.
   useEffect(() => {
-    const anyModalOpen = isModalOpen || isTeamModalOpen || isCreateUserModalOpen || confirmConfig.isOpen;
+    const anyModalOpen = isModalOpen || isTeamModalOpen || isCreateUserModalOpen || confirmConfig.isOpen || commentsForId !== null;
     document.body.style.overflow = anyModalOpen ? 'hidden' : '';
     return () => { document.body.style.overflow = ''; };
-  }, [isModalOpen, isTeamModalOpen, isCreateUserModalOpen, confirmConfig.isOpen]);
+  }, [isModalOpen, isTeamModalOpen, isCreateUserModalOpen, confirmConfig.isOpen, commentsForId]);
 
   // Presence heartbeats never stop ticking on their own, so we also refresh
   // this every few seconds purely to re-check which entries have gone stale.
@@ -308,7 +351,7 @@ function App() {
 
   // Activating a filter collapses the Equipos panel to a matching-teams strip; clearing resets it.
   useEffect(() => {
-    setTeamsExpanded(!filterActive);
+    setTeamsExpanded(false);
   }, [filterActive]);
 
   // Briefly plays the trash "burst" animation after a task is cancelled.
@@ -320,7 +363,7 @@ function App() {
 
   // Safety net: the browser always fires a native 'dragend' when a drag
   // operation finishes, even if the dragged card's own onDragEnd never runs
-  // (e.g. a live Firestore update re-renders/unmounts the card mid-drag,
+  // (e.g. a live update from another user re-renders/unmounts the card mid-drag,
   // detaching it from the tree before React's delegated listener can catch
   // the event). Without this, the trash button can get stuck visible.
   useEffect(() => {
@@ -460,6 +503,75 @@ function App() {
     const target = users.find(u => u.username === roleTarget);
     showToast(`${target?.fullName || roleTarget} ahora es ${roleChoice === 'admin' ? 'administrador' : 'usuario'}.`, true);
     setIsRoleModalOpen(false);
+  };
+
+  // The built-in admin and the role manager keep their username (the app identifies them by it).
+  const usernameLocked = user ? ['admin', 'inaki'].includes(user.username.toLowerCase()) : false;
+
+  const openProfileModal = () => {
+    if (!user) return;
+    const rec = users.find(u => u.username.toLowerCase() === user.username.toLowerCase());
+    setProfName(rec?.fullName || user.fullName || '');
+    setProfUsername(user.username);
+    setProfEmail(rec?.email || '');
+    setProfPassword('');
+    setProfPhoto(undefined);
+    setProfError('');
+    setIsProfileOpen(true);
+  };
+
+  const handlePhotoPicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // so picking the same file again still fires
+    if (!file) return;
+    try {
+      setProfPhoto(await fileToAvatarDataUrl(file));
+      setProfError('');
+    } catch (err) {
+      setProfError(err instanceof Error && err.message === 'too_big' ? 'Esa imagen es demasiado grande (máx. 15 MB).' : 'No se pudo leer esa imagen. Prueba con un JPG, PNG o WEBP.');
+    }
+  };
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    setProfError('');
+    const name = profName.trim();
+    const wanted = profUsername.trim();
+    if (!name) return setProfError('Escribe tu nombre.');
+    if (!isEmailValid(profEmail)) return setProfError('Escribe un correo electrónico válido.');
+    if (!usernameLocked && !/^[\p{L}\p{N}._-]{1,32}$/u.test(wanted)) {
+      return setProfError('El usuario solo puede tener letras, números, punto, guion y guion bajo (máx. 32).');
+    }
+    if (isAdmin && !profPassword) return setProfError('Escribe tu contraseña de administrador para guardar.');
+
+    setProfBusy(true);
+    const res = await updateProfile({
+      username: user.username,
+      password: isAdmin ? profPassword : undefined,
+      fullName: name,
+      email: profEmail.trim(),
+      ...(usernameLocked ? {} : { newUsername: wanted }),
+      ...(profPhoto !== undefined ? { photo: profPhoto } : {}),
+    });
+    setProfBusy(false);
+    if (!res.ok) {
+      const messages: Record<string, string> = {
+        bad_password: 'Tu contraseña de administrador es incorrecta.',
+        invalid_name: 'Escribe un nombre válido (máx. 80 caracteres).',
+        invalid_email: 'Escribe un correo electrónico válido.',
+        invalid_username: 'El usuario solo puede tener letras, números, punto, guion y guion bajo (máx. 32).',
+        exists: 'Ese nombre de usuario ya está en uso.',
+        protected: 'Ese nombre de usuario no está disponible para esta cuenta.',
+        invalid_photo: 'No se pudo guardar la foto. Prueba con otra imagen.',
+        timeout: 'No se pudo conectar con el servidor.',
+      };
+      return setProfError(messages[res.error ?? ''] ?? 'No se pudo guardar el perfil.');
+    }
+    // The session follows a rename; everyone else gets the new name through the live users list.
+    setUser(prev => prev && { ...prev, username: res.username ?? prev.username, fullName: name });
+    setIsProfileOpen(false);
+    showToast('Perfil actualizado.', true);
   };
 
   const openCreateUserModal = () => {
@@ -793,16 +905,48 @@ function App() {
     setStatus('todo');
     setPriority('media');
     setProgress(50);
+    setTaskType('single');
+    setRepeat('weekly');
+    setRepeatDay(1);
+    setRepeatMonth(1);
+    setModalError('');
+    setCommentText('');
     const defaultAssignee = assignee
       || viewingUserAsAdmin?.username
       || (viewingTeam
           ? (viewingTeam.memberUsernames.find(m => m.toLowerCase() === user?.username.toLowerCase()) || viewingTeam.memberUsernames[0] || '')
           : (user ? user.username : ''));
     setTargetAssignee(defaultAssignee);
+    setSharedWith(new Set(defaultAssignee ? [defaultAssignee] : []));
     setIsModalOpen(true);
   };
 
+  // Moving the progress slider in the comments panel saves that person's progress shortly after the
+  // last movement. The status follows it: 0 = por hacer, 1-99 = en curso, 100 = hecha.
+  const handleOwnProgress = (act: Activity, value: number) => {
+    setOwnDraft({ id: act.id, value });
+    if (ownTimer.current) clearTimeout(ownTimer.current);
+    ownTimer.current = setTimeout(() => {
+      void updateActivityStatus(act.id, value >= 100 ? 'done' : value > 0 ? 'doing' : 'todo', value);
+    }, 400);
+  };
+
+  // Once the server's copy shows the saved value, the slider goes back to following the data.
+  useEffect(() => {
+    if (!ownDraft) return;
+    const saved = activities.find(a => a.id === ownDraft.id);
+    if (saved && copyProgress(saved) === ownDraft.value) setOwnDraft(null);
+  }, [activities, ownDraft]);
+
+  // A shared task's card opens its comments; the pencil on the card opens the full editor.
+  const openCommentsPanel = (activity: Activity) => {
+    setOwnDraft(null);
+    setCommentText('');
+    setCommentsForId(activity.id);
+  };
+
   const openEditModal = (activity: Activity) => {
+    setCommentsForId(null);
     setModalMode('edit');
     setSelectedActivity(activity);
     setTitle(activity.title);
@@ -813,12 +957,18 @@ function App() {
     setPriority(activity.priority);
     setProgress(activity.progress ?? (activity.status === 'done' ? 100 : activity.status === 'doing' ? 50 : 0));
     setTargetAssignee(activity.username);
+    setTaskType(activity.kind ?? 'single');
+    setSharedWith(new Set(activity.kind === 'shared' ? sharedGroup(activities, activity.sharedId).map(a => a.username) : []));
+    setModalError('');
+    setCommentText('');
     setIsModalOpen(true);
   };
 
-  const handleSaveActivity = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!title.trim() || !startDate || !endDate || !user) return;
+  const handleSaveActivity = async (e?: React.FormEvent, confirmedRemoval = false) => {
+    e?.preventDefault();
+    // A repeating task has no dates: the day it comes back is its repeat rule.
+    if (!title.trim() || !user) return;
+    if (taskType !== 'recurring' && (!startDate || !endDate)) return;
 
     const assignee = targetAssignee || user.username;
     // Only note "assigned by" when someone assigns the task to a different
@@ -826,6 +976,44 @@ function App() {
     const assignedBy = assignee.toLowerCase() !== user.username.toLowerCase() ? user.username : undefined;
 
     const calculatedProgress = status === 'done' ? 100 : status === 'todo' ? 0 : progress;
+
+    // Editing a shared task can also change who is on it. Taking someone off deletes their copy and
+    // progress, so that asks for confirmation first.
+    const editingShared = modalMode === 'edit' && selectedActivity?.kind === 'shared' && !!selectedActivity.sharedId;
+    const people = editingShared ? participantDiff() : { added: [], removed: [] };
+    if (editingShared) {
+      if (sharedWith.size === 0) {
+        setModalError('Deja al menos una persona en la tarea.');
+        return;
+      }
+      if (people.removed.length > 0 && !confirmedRemoval) {
+        showConfirm(
+          'Quitar participantes',
+          `Se quitará a ${people.removed.map(displayNameOf).join(', ')} de la tarea. Su copia y su avance se eliminan; los comentarios se conservan.`,
+          () => void handleSaveActivity(undefined, true)
+        );
+        return;
+      }
+    }
+
+    if (modalMode === 'create' && taskType === 'shared') {
+      const usernames = [...sharedWith].filter(u => assigneeOptions.includes(u));
+      if (usernames.length === 0) {
+        setModalError('Elige al menos una persona para compartir la tarea.');
+        return;
+      }
+      const res = await addSharedActivity({
+        title, description, startDate, endDate, priority, usernames,
+        assignedBy: user.username, teamId: viewingTeam?.id,
+      });
+      if (!res.ok) {
+        setModalError(res.error === 'timeout' ? 'No se pudo conectar con el servidor.' : 'No se pudo crear la tarea compartida.');
+        return;
+      }
+      showToast(`Tarea compartida con ${usernames.length} ${usernames.length === 1 ? 'persona' : 'personas'}.`, true);
+      setIsModalOpen(false);
+      return;
+    }
 
     if (modalMode === 'create') {
       await addActivity({
@@ -838,7 +1026,10 @@ function App() {
         progress: calculatedProgress,
         username: assignee,
         assignedBy,
-        teamId: viewingTeam ? viewingTeam.id : undefined
+        teamId: viewingTeam ? viewingTeam.id : undefined,
+        repeat: taskType === 'recurring' ? repeat : undefined,
+        repeatDay: taskType === 'recurring' ? repeatDay : undefined,
+        repeatMonth: taskType === 'recurring' && repeat === 'yearly' ? repeatMonth : undefined,
       });
     } else if (modalMode === 'edit' && selectedActivity) {
       const updatedAct: Activity = {
@@ -851,18 +1042,56 @@ function App() {
         priority,
         progress: calculatedProgress,
         username: assignee,
-        assignedBy,
+        // A shared or repeating task keeps whoever created it, whoever edits it.
+        assignedBy: selectedActivity.kind === 'shared' || selectedActivity.kind === 'recurring' ? selectedActivity.assignedBy : assignedBy,
       };
       await updateActivity(updatedAct);
+      if (editingShared && (people.added.length > 0 || people.removed.length > 0)) {
+        const res = await setSharedParticipants(selectedActivity.sharedId as string, [...sharedWith], user.username);
+        if (!res.ok) {
+          setModalError(res.error === 'timeout' ? 'No se pudo conectar con el servidor.' : res.error === 'forbidden' ? 'Solo quienes participan (o un administrador) pueden cambiar los participantes.' : 'No se pudieron actualizar los participantes.');
+          return;
+        }
+        showToast(`Participantes actualizados${people.added.length ? ` · +${people.added.length}` : ''}${people.removed.length ? ` · −${people.removed.length}` : ''}.`, true);
+      }
     }
 
     setIsModalOpen(false);
   };
 
-  const handleDeleteActivity = (id: string) => {
+  const handleStopSeries = (id: string) => {
     showConfirm(
-      'Eliminar Actividad',
-      '¿Estás seguro de que quieres eliminar esta actividad?',
+      'Detener repetición',
+      'Esta tarea dejará de repetirse. La actual y las anteriores se quedan como tareas normales.',
+      async () => {
+        await stopSeries(id);
+        setIsModalOpen(false);
+      }
+    );
+  };
+
+  const handleSendComment = async (sharedId?: string) => {
+    const text = commentText.trim();
+    if (!user || !sharedId || !text || commentBusy) return;
+    setCommentBusy(true);
+    const res = await addComment(sharedId, user.username, text);
+    setCommentBusy(false);
+    if (!res.ok) {
+      showToast(res.error === 'forbidden' ? 'Solo quienes participan en la tarea pueden comentar.' : 'No se pudo enviar el comentario.', false);
+      return;
+    }
+    setCommentText('');
+  };
+
+  const handleDeleteActivity = (id: string) => {
+    const kind = activities.find(a => a.id === id)?.kind;
+    showConfirm(
+      kind === 'recurring' ? 'Eliminar tarea repetitiva' : 'Eliminar Actividad',
+      kind === 'shared'
+        ? 'Esta tarea compartida se quitará solo de este tablero. Las demás personas conservan su copia y los comentarios.'
+        : kind === 'recurring'
+          ? 'Se eliminará esta tarea y la serie dejará de repetirse: no se generarán más. Esta acción no se puede deshacer.'
+          : '¿Estás seguro de que quieres eliminar esta actividad?',
       async () => {
         await deleteActivity(id);
         setIsModalOpen(false);
@@ -910,6 +1139,11 @@ function App() {
   // logged in without one gets a blocking dialog; an admin can also edit others'.
   const currentUserRecord = user ? users.find(u => u.username.toLowerCase() === user.username.toLowerCase()) : undefined;
   const mustSetOwnEmail = !!currentUserRecord && !currentUserRecord.email;
+  // What the header shows for the logged-in person (an administrator too): their own name and photo.
+  const myName = currentUserRecord?.fullName || user?.fullName || user?.username || '';
+  const myPhoto = currentUserRecord ? avatarUrl(currentUserRecord) : undefined;
+  const myParts = myName.trim().split(/\s+/).filter(Boolean);
+  const myInitials = (myParts.length > 1 ? myParts[0][0] + myParts[1][0] : myName.trim().substring(0, 2)).toUpperCase() || '?';
   const emailDialogTarget = emailEditTarget ?? (mustSetOwnEmail ? user!.username : null);
 
   const handleSaveEmail = async (e: React.FormEvent) => {
@@ -1050,6 +1284,108 @@ function App() {
     return true;
   };
 
+  // Who a task can be assigned to / shared with: the team's members on a team board, otherwise
+  // everyone except the built-in admin account.
+  const assigneeOptions = viewingTeam ? viewingTeam.memberUsernames : users.filter(u => u.username.toLowerCase() !== 'admin').map(u => u.username);
+  const displayNameOf = (username: string) => users.find(u => u.username.toLowerCase() === username.toLowerCase())?.fullName || username;
+  // On a shared task being edited: who is on it now, and who would be added/removed by the picker.
+  // The picker also lists the people already on it even if they are no longer in the usual options.
+  const currentParticipants = selectedActivity?.kind === 'shared' ? sharedGroup(activities, selectedActivity.sharedId).map(a => a.username) : [];
+  const participantOptions = [...assigneeOptions, ...currentParticipants.filter(c => !assigneeOptions.some(o => o.toLowerCase() === c.toLowerCase()))];
+  const participantDiff = () => {
+    const selected = [...sharedWith];
+    return {
+      added: selected.filter(u => !currentParticipants.some(c => c.toLowerCase() === u.toLowerCase())),
+      removed: currentParticipants.filter(c => !selected.some(u => u.toLowerCase() === c.toLowerCase())),
+    };
+  };
+  const toggleSharedWith = (username: string) => setSharedWith(prev => {
+    const next = new Set(prev);
+    if (next.has(username)) next.delete(username); else next.add(username);
+    return next;
+  });
+  // Team progress shown on a shared task's card (the average over every person's copy).
+  const statsFor = (act: Activity): SharedStats | undefined => {
+    if (act.kind !== 'shared') return undefined;
+    const group = sharedGroup(activities, act.sharedId);
+    return {
+      ...sharedProgress(group),
+      // only on the logged-in person's own copy (an admin looking at someone else's board sees none)
+      unread: user && act.sharedId && act.username.toLowerCase() === user.username.toLowerCase()
+        ? unreadComments(comments, commentReads, { sharedId: act.sharedId, myCopyCreatedAt: act.createdAt }, user.username)
+        : 0,
+      members: group.map(a => ({
+        name: users.find(u => u.username.toLowerCase() === a.username.toLowerCase())?.fullName || a.username,
+        online: isUserOnline(a.username),
+      })),
+    };
+  };
+
+  // Team progress, everyone's progress and the comment thread of a shared task. Used by the
+  // comments panel (click on the card) and by the full edit modal (click on the pencil).
+  const renderSharedPanel = (act: Activity) => {
+  const group = sharedGroup(activities, act.sharedId);
+    const stats = sharedProgress(group);
+    const thread = comments.filter(c => c.sharedId === act.sharedId);
+    const nameOf = (username: string) => users.find(u => u.username.toLowerCase() === username.toLowerCase())?.fullName || username;
+    const statusIcon: Record<Activity['status'], string> = { todo: 'assignment', doing: 'schedule', done: 'check_circle', cancelled: 'cancel' };
+    const statusColor: Record<Activity['status'], string> = { todo: '--color-todo', doing: '--color-doing', done: '--color-done', cancelled: '--color-secondary' };
+    return (
+      <section className="shared-panel">
+        <div className="shared-overall">
+          <FieldLabel icon="groups">Avance del equipo</FieldLabel>
+          <strong className="shared-overall-value">{stats.average ?? '—'}{stats.average != null && '%'}</strong>
+        </div>
+        <div className="shared-bar" role="progressbar" aria-valuenow={stats.average ?? 0} aria-valuemin={0} aria-valuemax={100}>
+          <div className="shared-bar-fill" style={{ width: `${stats.average ?? 0}%` }} />
+        </div>
+        <ul className="shared-people">
+          {group.map(a => (
+            <li key={a.id} className={a.id === act.id ? 'is-me' : ''}>
+              <Avatar name={nameOf(a.username)} size={28} online={isUserOnline(a.username)} />
+              <span className="shared-person-name">{nameOf(a.username)}</span>
+              <Icon name={statusIcon[a.status]} size={16} style={{ color: `var(${statusColor[a.status]})` }} />
+              <span className="shared-person-bar"><span style={{ width: `${copyProgress(a)}%` }} /></span>
+              <span className="shared-person-pct">{copyProgress(a)}%</span>
+            </li>
+          ))}
+        </ul>
+
+        <FieldLabel icon="forum">Comentarios ({thread.length})</FieldLabel>
+        {thread.length === 0 ? (
+          <p className="field-hint">Todavía no hay comentarios. Escribe el primero.</p>
+        ) : (
+          <ul className="comment-list">
+            {thread.map(c => (
+              <li key={c.id} className="comment">
+                <Avatar name={nameOf(c.username)} size={28} />
+                <div className="comment-body">
+                  <div className="comment-head">
+                    <strong>{nameOf(c.username)}</strong>
+                    <time dateTime={c.createdAt}>{new Date(c.createdAt).toLocaleString('es-MX', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</time>
+                  </div>
+                  <p>{c.text}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="comment-compose">
+          <textarea
+            className="form-input"
+            rows={2}
+            maxLength={1000}
+            placeholder="Escribe un comentario… (Ctrl+Enter para enviar)"
+            value={commentText}
+            onChange={(e) => setCommentText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void handleSendComment(act.sharedId); } }}
+          />
+          <IconButton icon="send" label="Enviar comentario" variant="tonal" size={40} onClick={() => void handleSendComment(act.sharedId)} disabled={commentBusy || !commentText.trim()} />
+        </div>
+      </section>
+    );
+  };
+
   if (!user) {
     return (
       <div className="auth-wrapper">
@@ -1114,11 +1450,15 @@ function App() {
       {/* Top Navbar */}
       <div className="glass-panel board-header animate-fade-in">
         <div className="user-badge">
-          <div className="user-avatar">
-            {viewingTeam ? <span className="material-symbols-rounded">groups</span> : (isAdmin ? 'AD' : user.username.substring(0, 2).toUpperCase())}
-          </div>
+          {viewingTeam ? (
+            <div className="user-avatar"><span className="material-symbols-rounded">groups</span></div>
+          ) : (
+            <button type="button" className="user-avatar user-avatar-btn" onClick={openProfileModal} data-tip="Mi perfil" aria-label="Mi perfil">
+              {myPhoto ? <img className="avatar-img" src={myPhoto} alt="" draggable={false} /> : myInitials}
+            </button>
+          )}
           <div className="user-info">
-            <h3>{viewingTeam ? viewingTeam.name : (isAdmin ? 'Administrador' : user.username)}</h3>
+            <h3>{viewingTeam ? viewingTeam.name : myName}</h3>
             <p>{viewingTeam ? `Equipo · ${viewingTeam.memberUsernames.length} miembros` : (isAdmin ? 'Panel de Control General' : 'Tablero Personal')}</p>
           </div>
         </div>
@@ -1148,7 +1488,7 @@ function App() {
               {user.username.toLowerCase() === 'inaki' && (
                 <IconButton icon="manage_accounts" label="Cambiar rol de usuario" onClick={openRoleModal} />
               )}
-              <IconButton icon="download" label="Exportar a Excel" onClick={() => void handleExportExcel()} disabled={isExporting} />
+              <IconButton icon="download" label="Exportar a Excel" onClick={() => setIsExportOpen(true)} />
             </>
           )}
           <button className="btn btn-primary" onClick={() => openCreateModal()} style={{ gap: '0.4rem', whiteSpace: 'nowrap' }}>
@@ -1184,7 +1524,7 @@ function App() {
                 <span className="material-symbols-rounded" style={{ fontSize: '26px' }}>group</span>
               </div>
               <div className="stat-info">
-                <span className="stat-value">{users.length - 1}</span>
+                <span className="stat-value">{users.filter(u => u.username.toLowerCase() !== 'admin').length}</span>
                 <span className="stat-label">
                   Usuarios
                   {activeUserFilters.size > 0 && ` · ${activeUserFilters.size} activo${activeUserFilters.size > 1 ? 's' : ''}`}
@@ -1526,7 +1866,7 @@ function App() {
                         <Icon name="assignment" size={14} /> Por hacer ({userActs.filter(a => a.status === 'todo').length})
                       </span>
                       {userActs.filter(a => a.status === 'todo').map(a => (
-                        <MiniTaskCard key={a.id} act={a} today={today} overdue={isOverdue(a)} status="todo" />
+                        <MiniTaskCard key={a.id} act={a} today={today} overdue={isOverdue(a)} status="todo" sharedStats={statsFor(a)} />
                       ))}
                     </div>
                     )}
@@ -1538,7 +1878,7 @@ function App() {
                         <Icon name="schedule" size={14} /> En curso ({userActs.filter(a => a.status === 'doing').length})
                       </span>
                       {userActs.filter(a => a.status === 'doing').map(a => (
-                        <MiniTaskCard key={a.id} act={a} today={today} overdue={isOverdue(a)} status="doing" />
+                        <MiniTaskCard key={a.id} act={a} today={today} overdue={isOverdue(a)} status="doing" sharedStats={statsFor(a)} />
                       ))}
                     </div>
                     )}
@@ -1550,7 +1890,7 @@ function App() {
                         <Icon name="check_circle" size={14} /> Hecho ({userActs.filter(a => a.status === 'done').length})
                       </span>
                       {userActs.filter(a => a.status === 'done').map(a => (
-                        <MiniTaskCard key={a.id} act={a} today={today} overdue={isOverdue(a)} status="done" />
+                        <MiniTaskCard key={a.id} act={a} today={today} overdue={isOverdue(a)} status="done" sharedStats={statsFor(a)} />
                       ))}
                     </div>
                     )}
@@ -1562,7 +1902,7 @@ function App() {
                         <Icon name="cancel" size={14} /> Cancelado ({userActs.filter(a => a.status === 'cancelled').length})
                       </span>
                       {userActs.filter(a => a.status === 'cancelled').map(a => (
-                        <MiniTaskCard key={a.id} act={a} today={today} overdue={isOverdue(a)} status="cancelled" />
+                        <MiniTaskCard key={a.id} act={a} today={today} overdue={isOverdue(a)} status="cancelled" sharedStats={statsFor(a)} />
                       ))}
                     </div>
                     )}
@@ -1628,13 +1968,13 @@ function App() {
               {displayedActivities.filter(a => a.status === 'todo').map(act => (
                 <div
                   key={act.id}
-                  className={`task-card border-todo animate-fade-in ${isOverdue(act) ? 'overdue' : ''}`}
+                  className={`task-card border-todo animate-fade-in ${isOverdue(act) ? 'overdue' : ''} ${kindClass(act)}`}
                   draggable
                   onDragStart={(e) => handleDragStart(e, act.id)}
                   onDragEnd={handleDragEnd}
-                  onClick={() => openEditModal(act)}
+                  onClick={() => (act.kind === 'shared' ? openCommentsPanel(act) : openEditModal(act))}
                 >
-                  <TaskCardBody act={act} today={today} overdue={isOverdue(act)} ownerOnline={isUserOnline(act.username)} onArchive={() => void setActivityArchived(act.id, true)} />
+                  <TaskCardBody act={act} today={today} overdue={isOverdue(act)} ownerOnline={isUserOnline(act.username)} sharedStats={statsFor(act)} onEdit={() => openEditModal(act)} onArchive={() => void setActivityArchived(act.id, true)} />
                 </div>
               ))}
             </div>
@@ -1658,13 +1998,13 @@ function App() {
               {displayedActivities.filter(a => a.status === 'doing').map(act => (
                 <div
                   key={act.id}
-                  className={`task-card border-doing animate-fade-in ${isOverdue(act) ? 'overdue' : ''}`}
+                  className={`task-card border-doing animate-fade-in ${isOverdue(act) ? 'overdue' : ''} ${kindClass(act)}`}
                   draggable
                   onDragStart={(e) => handleDragStart(e, act.id)}
                   onDragEnd={handleDragEnd}
-                  onClick={() => openEditModal(act)}
+                  onClick={() => (act.kind === 'shared' ? openCommentsPanel(act) : openEditModal(act))}
                 >
-                  <TaskCardBody act={act} today={today} overdue={isOverdue(act)} showProgress ownerOnline={isUserOnline(act.username)} onArchive={() => void setActivityArchived(act.id, true)} />
+                  <TaskCardBody act={act} today={today} overdue={isOverdue(act)} showProgress ownerOnline={isUserOnline(act.username)} sharedStats={statsFor(act)} onEdit={() => openEditModal(act)} onArchive={() => void setActivityArchived(act.id, true)} />
                 </div>
               ))}
             </div>
@@ -1688,13 +2028,13 @@ function App() {
               {displayedActivities.filter(a => a.status === 'done' && isDoneVisibleOnBoard(a)).map(act => (
                 <div
                   key={act.id}
-                  className="task-card border-done animate-fade-in"
+                  className={`task-card border-done animate-fade-in ${kindClass(act)}`}
                   draggable
                   onDragStart={(e) => handleDragStart(e, act.id)}
                   onDragEnd={handleDragEnd}
-                  onClick={() => openEditModal(act)}
+                  onClick={() => (act.kind === 'shared' ? openCommentsPanel(act) : openEditModal(act))}
                 >
-                  <TaskCardBody act={act} today={today} overdue={false} ownerOnline={isUserOnline(act.username)} onArchive={() => void setActivityArchived(act.id, true)} />
+                  <TaskCardBody act={act} today={today} overdue={false} ownerOnline={isUserOnline(act.username)} sharedStats={statsFor(act)} onEdit={() => openEditModal(act)} onArchive={() => void setActivityArchived(act.id, true)} />
                 </div>
               ))}
             </div>
@@ -1721,6 +2061,63 @@ function App() {
       </div>
       )}
 
+      {/* Comments panel of a shared task (opens when its card is clicked) */}
+      {(() => {
+        const act = commentsForId ? activities.find(a => a.id === commentsForId) : undefined;
+        if (!act) return null;
+        return (
+          <div className="modal-overlay" onClick={() => setCommentsForId(null)}>
+            <div className="glass-panel modal-content animate-scale-in" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '520px' }}>
+              <div className="modal-header">
+                <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
+                  <Icon name="forum" style={{ color: 'var(--color-shared)' }} />
+                  <span className="comments-title">{act.title}</span>
+                </h3>
+                <div style={{ display: 'flex', gap: '0.4rem' }}>
+                  <IconButton icon="edit" label="Editar tarea" variant="tonal" size={36} onClick={() => openEditModal(act)} />
+                  <button type="button" className="modal-close" onClick={() => setCommentsForId(null)} aria-label="Cerrar">
+                    <span className="material-symbols-rounded">close</span>
+                  </button>
+                </div>
+              </div>
+              {(() => {
+                // This person's own progress, first thing in the panel, and it can be moved
+                const pct = ownDraft?.id === act.id ? ownDraft.value : copyProgress(act);
+                const owner = users.find(u => u.username.toLowerCase() === act.username.toLowerCase())?.fullName || act.username;
+                const mine = act.username.toLowerCase() === user?.username.toLowerCase();
+                const label = mine ? 'Mi avance' : `Avance de ${owner}`;
+                return (
+                  <div className="own-progress">
+                    <div className="own-progress-head">
+                      <Avatar name={owner} size={26} online={isUserOnline(act.username)} />
+                      <span className="own-progress-label">{label}</span>
+                      <strong className="own-progress-pct">{pct}%</strong>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={5}
+                      className="own-progress-range"
+                      style={{ ['--fill' as string]: `${pct}%`, ['--fill-color' as string]: pct >= 100 ? 'var(--color-done)' : 'var(--color-doing)' }}
+                      value={pct}
+                      disabled={act.status === 'cancelled'}
+                      aria-label={label}
+                      onChange={(e) => handleOwnProgress(act, Number(e.target.value))}
+                    />
+                  </div>
+                );
+              })()}
+              {act.description && <p className="field-hint" style={{ margin: '0 0 0.75rem' }}>{act.description}</p>}
+              <div className="task-dates" style={{ marginBottom: '0.5rem' }}>
+                <TaskDates start={act.startDate} end={act.endDate} overdueDays={isOverdue(act) ? daysOverdue(act.endDate, today) : undefined} />
+              </div>
+              {renderSharedPanel(act)}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Modal dialog for creating / editing activities */}
       {isModalOpen && (
         <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
@@ -1736,7 +2133,68 @@ function App() {
             </div>
 
             <form onSubmit={handleSaveActivity}>
-              {!viewingUserAsAdmin && (isAdmin || viewingTeam) && (
+              {modalMode === 'create' && (
+                <div className="form-group">
+                  <FieldLabel icon="category">Tipo de tarea</FieldLabel>
+                  <Segmented
+                    ariaLabel="Tipo de tarea"
+                    value={taskType}
+                    onChange={(v) => { setTaskType(v); setModalError(''); }}
+                    options={[
+                      { value: 'single', label: 'Individual', icon: 'person', color: '--color-primary' },
+                      { value: 'shared', label: 'Compartida', icon: 'groups', color: '--color-shared' },
+                      { value: 'recurring', label: 'Repetitiva', icon: 'event_repeat', color: '--color-recurring' },
+                    ]}
+                  />
+                </div>
+              )}
+
+              {((modalMode === 'create' && taskType === 'shared') || (modalMode === 'edit' && selectedActivity?.kind === 'shared')) && (
+                <div className="form-group">
+                  <FieldLabel icon="groups">
+                    {modalMode === 'create' ? 'Compartir con' : 'Participantes'} ({sharedWith.size} {sharedWith.size === 1 ? 'persona' : 'personas'})
+                  </FieldLabel>
+                  <div className="users-panel-actions participant-actions">
+                    <button type="button" onClick={() => setSharedWith(new Set(participantOptions))}>Todos</button>
+                    <button type="button" onClick={() => setSharedWith(new Set())} disabled={sharedWith.size === 0}>Ninguno</button>
+                  </div>
+                  <div className="participant-grid" role="group" aria-label="Personas con las que se comparte">
+                    {participantOptions.map(username => {
+                      const on = sharedWith.has(username);
+                      const name = users.find(u => u.username.toLowerCase() === username.toLowerCase())?.fullName || username;
+                      return (
+                        <button
+                          key={username}
+                          type="button"
+                          role="checkbox"
+                          aria-checked={on}
+                          className={`participant ${on ? 'is-on' : ''}`}
+                          onClick={() => toggleSharedWith(username)}
+                        >
+                          <Avatar name={name} size={32} />
+                          <span className="participant-name">{name}</span>
+                          <Icon name={on ? 'check_box' : 'check_box_outline_blank'} size={22} className="participant-check" />
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {modalMode === 'create' ? (
+                    <p className="field-hint">Cada persona la verá en su tablero con su propio avance; el equipo ve el promedio.</p>
+                  ) : (() => {
+                    const { added, removed } = participantDiff();
+                    return added.length === 0 && removed.length === 0 ? (
+                      <p className="field-hint">Marca o desmarca personas y guarda. Quien se agrega la recibe en su tablero (y un correo); a quien se quita se le elimina su copia y su avance.</p>
+                    ) : (
+                      <p className="field-hint participant-diff">
+                        {added.length > 0 && <span className="participant-diff-add">Se agregará a: {added.map(displayNameOf).join(', ')}. </span>}
+                        {removed.length > 0 && <span className="participant-diff-remove">Se quitará a: {removed.map(displayNameOf).join(', ')} (se elimina su copia y su avance).</span>}
+                      </p>
+                    );
+                  })()}
+                </div>
+              )}
+
+              {taskType !== 'shared' && !viewingUserAsAdmin && (isAdmin || viewingTeam) && (
                 <div className="form-group">
                   <FieldLabel icon="person">Asignar A</FieldLabel>
                   <select
@@ -1746,7 +2204,7 @@ function App() {
                     required
                   >
                     <option value="" disabled>Selecciona un usuario...</option>
-                    {(viewingTeam ? viewingTeam.memberUsernames : users.filter(u => u.username.toLowerCase() !== 'admin').map(u => u.username)).map(username => (
+                    {assigneeOptions.map(username => (
                       <option key={username} value={username}>{username}</option>
                     ))}
                   </select>
@@ -1776,29 +2234,87 @@ function App() {
                 />
               </div>
 
-              <div className="date-row">
-                <div className="form-group">
-                  <FieldLabel icon="event">Fecha Inicio</FieldLabel>
-                  <input
-                    type="date"
-                    className="form-input"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    required
-                  />
+              {taskType !== 'recurring' && (
+                <div className="date-row">
+                  <div className="form-group">
+                    <FieldLabel icon="event">Fecha Inicio</FieldLabel>
+                    <input
+                      type="date"
+                      className="form-input"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="form-group">
+                    <FieldLabel icon="event_available">Fecha Fin</FieldLabel>
+                    <input
+                      type="date"
+                      className="form-input"
+                      value={endDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      required
+                    />
+                  </div>
                 </div>
-                <div className="form-group">
-                  <FieldLabel icon="event_available">Fecha Fin</FieldLabel>
-                  <input
-                    type="date"
-                    className="form-input"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    required
-                  />
-                </div>
-              </div>
+              )}
 
+              {taskType === 'recurring' && (
+                <div className="form-group">
+                  <FieldLabel icon="event_repeat">Se repite</FieldLabel>
+                  {modalMode === 'create' ? (
+                    <>
+                      <select
+                        className="form-input"
+                        value={repeat}
+                        onChange={(e) => {
+                          const next = e.target.value as Repeat;
+                          setRepeat(next);
+                          setRepeatDay(d => dayFor(next, d));
+                        }}
+                      >
+                        {REPEAT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+
+                      {usesWeekday(repeat) ? (
+                        <div style={{ marginTop: '0.75rem' }}>
+                          <FieldLabel icon="today">Qué día de la semana se regenera</FieldLabel>
+                          <Segmented
+                            ariaLabel="Día de la semana"
+                            value={String(repeatDay)}
+                            onChange={(v) => setRepeatDay(Number(v))}
+                            options={WEEKDAYS.map(w => ({ value: String(w.value), label: w.short, icon: 'today', color: '--color-recurring' }))}
+                          />
+                        </div>
+                      ) : (
+                        <div className="repeat-day-row">
+                          <div className="form-group">
+                            <FieldLabel icon="today">{repeat === 'yearly' ? 'Día' : 'Qué día del mes se regenera'}</FieldLabel>
+                            <select className="form-input" value={repeatDay} onChange={(e) => setRepeatDay(Number(e.target.value))} aria-label="Día del mes">
+                              {Array.from({ length: 31 }, (_, i) => i + 1).map(d => <option key={d} value={d}>{d}</option>)}
+                            </select>
+                          </div>
+                          {repeat === 'yearly' && (
+                            <div className="form-group">
+                              <FieldLabel icon="calendar_month">Mes</FieldLabel>
+                              <select className="form-input" value={repeatMonth} onChange={(e) => setRepeatMonth(Number(e.target.value))} aria-label="Mes">
+                                {MONTH_NAMES.map((m, i) => <option key={m} value={i + 1}>{m.charAt(0).toUpperCase() + m.slice(1)}</option>)}
+                              </select>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      <p className="field-hint">
+                        La primera se crea ahora y las siguientes se generan solas{repeat === 'monthly' || repeat === 'quarterly' || repeat === 'semiannual' || repeat === 'yearly' ? '; si el mes no tiene ese día, se usa su último día' : ''}. No lleva fecha de inicio ni de fin.
+                      </p>
+                    </>
+                  ) : (
+                    <p className="field-hint field-hint-strong">{describeRepeat(selectedActivity ?? {}).label}</p>
+                  )}
+                </div>
+              )}
+
+              {!(modalMode === 'create' && taskType === 'shared') && (
               <div className="form-group">
                 <FieldLabel icon="flag_circle">Estado</FieldLabel>
                 <Segmented
@@ -1811,9 +2327,13 @@ function App() {
                     { value: 'done', label: 'Hecho', icon: 'check_circle', color: '--color-done' },
                   ]}
                 />
+                {modalMode === 'edit' && taskType === 'shared' && selectedActivity && (
+                  <p className="field-hint">Este es el avance de {selectedActivity.username}; cada persona lleva el suyo.</p>
+                )}
               </div>
+              )}
 
-              {status === 'doing' && (
+              {!(modalMode === 'create' && taskType === 'shared') && status === 'doing' && (
                 <div className="form-group animate-fade-in">
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <FieldLabel icon="donut_small">Porcentaje de Avance</FieldLabel>
@@ -1862,15 +2382,22 @@ function App() {
                 />
               </div>
 
+              {modalMode === 'edit' && selectedActivity?.kind === 'shared' && renderSharedPanel(selectedActivity)}
+
+              {modalError && <p className="form-error">{modalError}</p>}
+
               <div className="modal-footer">
                 {modalMode === 'edit' && selectedActivity && (
                   <IconButton
                     icon="delete"
-                    label="Eliminar actividad"
+                    label={selectedActivity.kind === 'recurring' ? 'Eliminar definitivamente (deja de repetirse)' : selectedActivity.kind === 'shared' ? 'Quitar de este tablero' : 'Eliminar actividad'}
                     variant="danger"
                     onClick={() => handleDeleteActivity(selectedActivity.id)}
                     className="push-left"
                   />
+                )}
+                {modalMode === 'edit' && selectedActivity?.kind === 'recurring' && (
+                  <IconButton icon="event_busy" label="Detener repetición" variant="tonal" onClick={() => handleStopSeries(selectedActivity.id)} />
                 )}
                 <button type="submit" className="btn btn-primary" style={{ width: 'auto', gap: '0.3rem' }}>
                   <Icon name="check" /> Guardar
@@ -1885,6 +2412,13 @@ function App() {
       {isArchiveModalOpen && (() => {
         const counts = archiveTabCounts(archiveActivities);
         const rows = archiveActivities.filter(a => matchesTab(a, archiveTab));
+        const sectionTitles: Record<ArchiveTab, { title: string; icon: string; color: string }> = {
+          all: { title: 'Todo el archivero', icon: 'folder_open', color: '--color-primary' },
+          done: { title: 'Tareas hechas', icon: 'check_circle', color: '--color-done' },
+          cancelled: { title: 'Tareas canceladas', icon: 'cancel', color: '--color-danger' },
+          archived: { title: 'Tareas archivadas', icon: 'inventory_2', color: '--color-secondary' },
+        };
+        const sectionInfo = sectionTitles[archiveTab];
         const statusIcon: Record<Activity['status'], string> = { todo: 'assignment', doing: 'schedule', done: 'check_circle', cancelled: 'cancel' };
         const statusColor: Record<Activity['status'], string> = { todo: '--color-todo', doing: '--color-doing', done: '--color-done', cancelled: '--color-danger' };
         const statusName: Record<Activity['status'], string> = { todo: 'Por hacer', doing: 'En curso', done: 'Hecha', cancelled: 'Cancelada' };
@@ -1910,15 +2444,23 @@ function App() {
 
               <Segmented
                 ariaLabel="Filtrar el archivero"
+                iconOnly
                 value={archiveTab}
                 onChange={setArchiveTab}
                 options={[
-                  { value: 'all', label: `Todas ${counts.all}`, icon: 'folder_open', color: '--color-primary' },
-                  { value: 'done', label: `Hechas ${counts.done}`, icon: 'check_circle', color: '--color-done' },
-                  { value: 'cancelled', label: `Canceladas ${counts.cancelled}`, icon: 'cancel', color: '--color-danger' },
-                  { value: 'archived', label: `Archivadas ${counts.archived}`, icon: 'inventory_2', color: '--color-secondary' },
+                  { value: 'all', label: 'Todas', icon: 'folder_open', color: '--color-primary', count: counts.all },
+                  { value: 'done', label: 'Hechas', icon: 'check_circle', color: '--color-done', count: counts.done },
+                  { value: 'cancelled', label: 'Canceladas', icon: 'cancel', color: '--color-danger', count: counts.cancelled },
+                  { value: 'archived', label: 'Archivadas', icon: 'inventory_2', color: '--color-secondary', count: counts.archived },
                 ]}
               />
+
+              {/* Says where you are, since the tabs are icons only */}
+              <p className="archive-section" aria-live="polite">
+                <Icon name={sectionInfo.icon} size={18} style={{ color: `var(${sectionInfo.color})` }} />
+                {sectionInfo.title}
+                <span className="archive-section-count">{rows.length}</span>
+              </p>
 
               {rows.length === 0 ? (
                 <p className="users-panel-empty">No hay tareas en esta sección del archivero.</p>
@@ -1942,7 +2484,7 @@ function App() {
                           {(viewingTeam || (isAdmin && !viewingUserAsAdmin)) && <span className="history-row-owner">{a.username} · </span>}
                           {a.status === 'done'
                             ? `Completada el ${formatShortDate((a.completedAt || a.createdAt).substring(0, 10))}`
-                            : `${statusName[a.status]} · fin ${formatShortDate(a.endDate)}`}
+                            : a.endDate ? `${statusName[a.status]} · fin ${formatShortDate(a.endDate)}` : statusName[a.status]}
                         </span>
                         <span className="history-row-actions">
                           <IconButton icon="unarchive" label="Restaurar" variant="tonal" size={32} onClick={() => restore(a)} />
@@ -2410,6 +2952,95 @@ function App() {
         </div>
       )}
 
+      {/* Profile: photo, name, username and email of the logged-in user */}
+      {isProfileOpen && user && (() => {
+        const preview = profPhoto === undefined ? myPhoto : (profPhoto ?? undefined);
+        return (
+          <div className="modal-overlay" onClick={() => setIsProfileOpen(false)}>
+            <div className="glass-panel modal-content animate-scale-in" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '460px' }}>
+              <div className="modal-header">
+                <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Icon name="account_circle" style={{ color: 'var(--color-primary)' }} />
+                  Mi perfil
+                </h3>
+                <button type="button" className="modal-close" onClick={() => setIsProfileOpen(false)} aria-label="Cerrar">
+                  <span className="material-symbols-rounded">close</span>
+                </button>
+              </div>
+
+              <form onSubmit={handleSaveProfile} style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <div className="profile-photo">
+                  <span className="profile-photo-preview">
+                    {preview ? <img className="avatar-img" src={preview} alt="Tu foto de perfil" draggable={false} /> : myInitials}
+                  </span>
+                  <div className="profile-photo-actions">
+                    <input ref={photoInputRef} type="file" accept="image/*" hidden onChange={(e) => void handlePhotoPicked(e)} />
+                    <button type="button" className="btn btn-secondary" style={{ width: 'auto', gap: '0.4rem' }} onClick={() => photoInputRef.current?.click()}>
+                      <Icon name="photo_camera" size={18} /> {preview ? 'Cambiar foto' : 'Subir foto'}
+                    </button>
+                    {preview && (
+                      <IconButton icon="delete" label="Quitar foto" variant="danger" size={38} onClick={() => setProfPhoto(null)} />
+                    )}
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <FieldLabel icon="person">Nombre y apellido</FieldLabel>
+                  <input type="text" className="form-input" value={profName} maxLength={80} onChange={(e) => setProfName(e.target.value)} required />
+                </div>
+
+                <div className="form-group">
+                  <FieldLabel icon="badge">Nombre de usuario</FieldLabel>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={profUsername}
+                    maxLength={32}
+                    disabled={usernameLocked}
+                    autoComplete="off"
+                    onChange={(e) => setProfUsername(e.target.value)}
+                    required
+                  />
+                  <p className="field-hint">
+                    {usernameLocked
+                      ? 'Esta cuenta no puede cambiar su nombre de usuario.'
+                      : 'Es con el que inicias sesión. Tus tareas, equipos y comentarios te siguen al cambiarlo.'}
+                  </p>
+                </div>
+
+                <div className="form-group">
+                  <FieldLabel icon="mail">Correo electrónico</FieldLabel>
+                  <input type="email" className="form-input" value={profEmail} onChange={(e) => setProfEmail(e.target.value)} required />
+                </div>
+
+                {isAdmin && (
+                  <div className="form-group">
+                    <FieldLabel icon="admin_panel_settings">Tu contraseña de administrador</FieldLabel>
+                    <input
+                      type="password"
+                      className="form-input"
+                      autoComplete="current-password"
+                      placeholder="Necesaria para guardar los cambios"
+                      value={profPassword}
+                      onChange={(e) => setProfPassword(e.target.value)}
+                      required
+                    />
+                  </div>
+                )}
+
+                {profError && <p className="form-error" style={{ margin: 0 }}>{profError}</p>}
+
+                <div className="modal-footer" style={{ marginTop: 0 }}>
+                  <button type="submit" className="btn btn-primary" style={{ width: 'auto', gap: '0.3rem' }} disabled={profBusy}>
+                    <Icon name="check" /> Guardar
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Mail settings (admin) */}
       {isMailModalOpen && (
         <div className="modal-overlay" onClick={() => setIsMailModalOpen(false)}>
@@ -2491,6 +3122,17 @@ function App() {
             </form>
           </div>
         </div>
+      )}
+
+      {isExportOpen && (
+        <ExportDialog
+          activities={activities}
+          users={users}
+          teams={teams}
+          today={today}
+          onClose={() => setIsExportOpen(false)}
+          onDone={(result) => showToast(result.message, result.ok)}
+        />
       )}
 
       <Toast toast={toast} />

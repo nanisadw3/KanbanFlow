@@ -15,8 +15,6 @@
     "cors": "^2.8.6",
     "exceljs": "^4.4.0",
     "express": "^5.2.1",
-    "firebase": "^12.17.1",
-    "lucide-react": "^1.30.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "socket.io": "^4.8.3",

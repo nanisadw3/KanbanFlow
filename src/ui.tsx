@@ -1,9 +1,102 @@
+import { useEffect, useRef, useState, useMemo } from 'react';
 import type { CSSProperties, MouseEvent, ReactNode } from 'react';
 import type { ToastState } from './useToast';
-import type { Activity } from './db';
+import type { Activity, User } from './db';
+import { subscribeUsers } from './db';
+import { AvatarPhotosContext, buildPersonLookup, useAvatarPerson } from './avatarContext';
 import { daysOverdue, formatShortDate } from './dates';
+import { describeRepeat, kindClass } from './taskKinds';
+import type { SharedStats } from './taskKinds';
 
 // Presentational primitives for the icon-first UI. No business state lives here.
+
+// The single tooltip for every [data-tip] in the app. It follows the INNERMOST hovered element (so a
+// parent's tip never shows under a child's), is positioned in the viewport (so overflow containers
+// like modals can't clip it), flips below the element when there is no room above, and is clamped
+// to the window's edges. Keyboard focus shows it too. Rendered once, in main.tsx.
+export function TooltipLayer() {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const tip = ref.current;
+    // No hover on touch screens: a tooltip would never close.
+    if (!tip || (window.matchMedia && window.matchMedia('(hover: none)').matches)) return;
+
+    const MARGIN = 8;
+    let target: HTMLElement | null = null;
+    let timer = 0;
+    let raf = 0;
+
+    const hide = () => {
+      window.clearTimeout(timer);
+      cancelAnimationFrame(raf);
+      target = null;
+      tip.classList.remove('is-visible');
+    };
+
+    // Re-positions every frame while visible: the element may move, change its text or disappear
+    // (a live update can remove the card under the cursor).
+    const place = () => {
+      if (!target || !target.isConnected) return hide();
+      const text = target.getAttribute('data-tip');
+      if (!text) return hide();
+      if (tip.textContent !== text) tip.textContent = text;
+      const r = target.getBoundingClientRect();
+      const t = tip.getBoundingClientRect();
+      const above = r.top - t.height - MARGIN;
+      const top = above >= MARGIN ? above : r.bottom + MARGIN;
+      // The bounce grows out of the side that touches the element.
+      const side = above >= MARGIN ? 'above' : 'below';
+      if (tip.dataset.side !== side) tip.dataset.side = side;
+      const left = Math.min(Math.max(MARGIN, r.left + r.width / 2 - t.width / 2), window.innerWidth - t.width - MARGIN);
+      tip.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
+      raf = requestAnimationFrame(place);
+    };
+
+    const show = (el: HTMLElement) => {
+      target = el;
+      tip.classList.add('is-visible');
+      place();
+    };
+
+    const tipOf = (n: EventTarget | null) => (n instanceof Element ? n.closest<HTMLElement>('[data-tip]') : null);
+
+    const onOver = (e: PointerEvent) => {
+      const el = tipOf(e.target);
+      if (el && el === target) return;
+      hide();
+      if (el) timer = window.setTimeout(() => show(el), 350);
+    };
+    const onLeaveWindow = (e: PointerEvent) => { if (!e.relatedTarget) hide(); };
+    const onFocusIn = (e: FocusEvent) => {
+      const el = tipOf(e.target);
+      hide();
+      if (el && el.matches(':focus-visible')) show(el);
+    };
+
+    document.addEventListener('pointerover', onOver);
+    document.addEventListener('pointerout', onLeaveWindow);
+    document.addEventListener('focusin', onFocusIn);
+    document.addEventListener('focusout', hide);
+    document.addEventListener('pointerdown', hide, true);
+    document.addEventListener('dragstart', hide, true);
+    document.addEventListener('scroll', hide, true);
+    window.addEventListener('blur', hide);
+    return () => {
+      hide();
+      document.removeEventListener('pointerover', onOver);
+      document.removeEventListener('pointerout', onLeaveWindow);
+      document.removeEventListener('focusin', onFocusIn);
+      document.removeEventListener('focusout', hide);
+      document.removeEventListener('pointerdown', hide, true);
+      document.removeEventListener('dragstart', hide, true);
+      document.removeEventListener('scroll', hide, true);
+      window.removeEventListener('blur', hide);
+    };
+  }, []);
+
+  return <div ref={ref} className="tip-layer" role="tooltip" aria-hidden="true" />;
+}
 
 export function Icon({ name, size, className, style }: { name: string; size?: number; className?: string; style?: CSSProperties }) {
   return (
@@ -53,12 +146,26 @@ const initialsOf = (name: string): string => {
   return (parts[0][0] + parts[1][0]).toUpperCase();
 };
 
+// Supplies each person's photo and display name to every <Avatar> below it (subscribes to the live users list itself).
+export function PhotoProvider({ children }: { children: ReactNode }) {
+  const [users, setUsers] = useState<User[]>([]);
+  useEffect(() => subscribeUsers(setUsers), []);
+  const lookup = useMemo(() => buildPersonLookup(users), [users]);
+  return <AvatarPhotosContext.Provider value={lookup}>{children}</AvatarPhotosContext.Provider>;
+}
+
 // Color = presence, not identity: green when online, gray otherwise. `online` is
 // undefined where presence isn't known; that renders like offline (gray) with no status text.
+// Shows the person's profile photo when they have one, their initials otherwise.
 export function Avatar({ name, size = 36, online }: { name: string; size?: number; online?: boolean }) {
   const on = online === true;
   const token = on ? '--color-done' : '--color-secondary';
-  const tip = online === undefined ? name : `${name} · ${on ? 'en línea' : 'desconectado'}`;
+  // Whatever name the screen passed (username or full name), the avatar shows the same person the same way.
+  const person = useAvatarPerson(name);
+  const label = person?.label ?? name;
+  const photo = person?.photo;
+  const tip = online === undefined ? label : `${label} · ${on ? 'en línea' : 'desconectado'}`;
+  const [failed, setFailed] = useState<string | null>(null);
   return (
     <span
       className="avatar"
@@ -67,8 +174,23 @@ export function Avatar({ name, size = 36, online }: { name: string; size?: numbe
       role="img"
       aria-label={tip}
     >
-      {initialsOf(name)}
+      {photo && failed !== photo
+        ? <img className="avatar-img" src={photo} alt="" draggable={false} onError={() => setFailed(photo)} />
+        : initialsOf(label)}
       {on && <span className="avatar-online" />}
+    </span>
+  );
+}
+
+// Everyone who has a copy of a shared task, overlapping like a group of faces.
+export function AvatarStack({ members, max = 4, size = 24 }: { members: { name: string; online?: boolean }[]; max?: number; size?: number }) {
+  const shown = members.slice(0, max);
+  const extra = members.length - shown.length;
+  const tip = `Participan: ${members.map(m => m.name).join(', ')}`;
+  return (
+    <span className="avatar-stack" data-tip={tip} role="img" aria-label={tip}>
+      {shown.map(m => <Avatar key={m.name} name={m.name} size={size} online={m.online} />)}
+      {extra > 0 && <span className="avatar-stack-more" style={{ ['--sz' as string]: `${size}px` }}>+{extra}</span>}
     </span>
   );
 }
@@ -84,9 +206,9 @@ export function PriorityFlag({ priority }: { priority?: Activity['priority'] }) 
   );
 }
 
-export function Meta({ icon, tip, children, tone }: { icon: string; tip: string; children: ReactNode; tone?: 'danger' }) {
+export function Meta({ icon, tip, children, tone }: { icon: string; tip: string; children: ReactNode; tone?: 'danger' | 'shared' | 'recurring' | 'unread' }) {
   return (
-    <span className={`meta ${tone === 'danger' ? 'meta-danger' : ''}`} data-tip={tip}>
+    <span className={`meta ${tone ? `meta-${tone}` : ''}`} data-tip={tip}>
       <Icon name={icon} size={14} />
       <span className="sr-only">{tip}: </span>
       {children}
@@ -94,7 +216,25 @@ export function Meta({ icon, tip, children, tone }: { icon: string; tip: string;
   );
 }
 
+// What sets a shared or repeating task apart: its own icon and color. Nothing for a normal task.
+export function KindBadge({ act, sharedStats }: { act: Activity; sharedStats?: SharedStats }) {
+  if (act.kind === 'shared') {
+    const avg = sharedStats?.average;
+    const tip = `Tarea compartida${sharedStats ? ` · ${sharedStats.people} ${sharedStats.people === 1 ? 'persona' : 'personas'}` : ''}${avg != null ? ` · avance del equipo ${avg}%` : ''}`;
+    return <Meta icon="groups" tip={tip} tone="shared">{avg != null ? `${avg}%` : 'Compartida'}</Meta>;
+  }
+  if (act.kind === 'recurring') {
+    const rule = describeRepeat(act);
+    return <Meta icon="event_repeat" tip={`Tarea repetitiva · ${rule.label.toLowerCase()}`} tone="recurring">{rule.short}</Meta>;
+  }
+  return null;
+}
+
 export function TaskDates({ start, end, overdueDays }: { start: string; end: string; overdueDays?: number }) {
+  // A repeating task has no end date: show only the day this one was generated.
+  if (!end) {
+    return <Meta icon="calendar_month" tip={`Generada el ${start}`}>{formatShortDate(start)}</Meta>;
+  }
   return (
     <>
       <Meta icon="calendar_month" tip={`Del ${start} al ${end}`}>
@@ -118,13 +258,16 @@ export function FieldLabel({ icon, children }: { icon: string; children: ReactNo
   );
 }
 
+// Options can carry a `count` (a number shown next to the icon). With `iconOnly` the text label is
+// not drawn: it stays as the accessible name and the tooltip.
 export function Segmented<T extends string>({
-  value, onChange, options, ariaLabel,
+  value, onChange, options, ariaLabel, iconOnly,
 }: {
   value: T;
   onChange: (v: T) => void;
-  options: { value: T; label: string; icon: string; color: string }[];
+  options: { value: T; label: string; icon: string; color: string; count?: number }[];
   ariaLabel: string;
+  iconOnly?: boolean;
 }) {
   return (
     <div className="segmented" role="radiogroup" aria-label={ariaLabel}>
@@ -134,12 +277,15 @@ export function Segmented<T extends string>({
           type="button"
           role="radio"
           aria-checked={value === o.value}
+          aria-label={iconOnly ? `${o.label}${o.count !== undefined ? ` (${o.count})` : ''}` : undefined}
+          data-tip={iconOnly ? o.label : undefined}
           className={`segmented-option ${value === o.value ? 'is-selected' : ''}`}
           style={{ ['--seg' as string]: `var(${o.color})`, ['--seg-rgb' as string]: `var(${o.color}-rgb)` }}
           onClick={() => onChange(o.value)}
         >
-          <Icon name={o.icon} size={18} />
-          {o.label}
+          <Icon name={o.icon} size={iconOnly ? 22 : 18} />
+          {!iconOnly && o.label}
+          {o.count !== undefined && <span className="segmented-count">{o.count}</span>}
         </button>
       ))}
     </div>
@@ -149,41 +295,64 @@ export function Segmented<T extends string>({
 // Body of a board card (title, flags, progress, expandable details, footer). The wrapper
 // <div draggable …> with every drag handler stays in App.tsx.
 export function TaskCardBody({
-  act, today, overdue, showProgress, onArchive, ownerOnline,
+  act, today, overdue, showProgress, onArchive, onEdit, ownerOnline, sharedStats,
 }: {
   act: Activity;
   today: string;
   overdue: boolean;
   showProgress?: boolean;
   onArchive?: () => void;
+  onEdit?: () => void;
   ownerOnline?: boolean;
+  sharedStats?: SharedStats;
 }) {
+  // A shared task shows the TEAM's progress (the average), in every column, never one person's own.
+  const teamProgress = act.kind === 'shared' && sharedStats !== undefined;
+  const barValue = teamProgress ? sharedStats.average : showProgress ? (act.progress ?? 50) : null;
   return (
     <>
       <div className="task-header" style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', alignItems: 'stretch' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
           <h4 className="task-title">{act.title}</h4>
-          <Icon name="edit" size={16} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+          {!onEdit && <Icon name="edit" size={16} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />}
         </div>
         <div className="task-badges">
           <PriorityFlag priority={act.priority} />
-          {showProgress && (
+          <KindBadge act={act} sharedStats={sharedStats} />
+          {teamProgress && (sharedStats.unread ?? 0) > 0 && (
+            <Meta icon="mark_chat_unread" tip={`${sharedStats.unread} ${sharedStats.unread === 1 ? 'comentario nuevo' : 'comentarios nuevos'}`} tone="unread">
+              {sharedStats.unread}
+            </Meta>
+          )}
+          {showProgress && !teamProgress && (
             <Meta icon="donut_small" tip="Avance">{act.progress ?? 50}%</Meta>
           )}
-          {onArchive && (
-            <IconButton
-              icon="inventory_2"
-              label="Archivar"
-              size={28}
-              className="task-archive"
-              draggable={false}
-              onClick={(e) => { e.stopPropagation(); onArchive(); }}
-            />
+          {(onEdit || onArchive) && (
+            <div className="task-actions">
+              {onArchive && (
+                <IconButton
+                  icon="inventory_2"
+                  label="Archivar"
+                  size={28}
+                  draggable={false}
+                  onClick={(e) => { e.stopPropagation(); onArchive(); }}
+                />
+              )}
+              {onEdit && (
+                <IconButton
+                  icon="edit"
+                  label="Editar tarea"
+                  size={28}
+                  draggable={false}
+                  onClick={(e) => { e.stopPropagation(); onEdit(); }}
+                />
+              )}
+            </div>
           )}
         </div>
-        {showProgress && (
-          <div className="task-progress" role="progressbar" aria-valuenow={act.progress ?? 50} aria-valuemin={0} aria-valuemax={100}>
-            <div className="task-progress-fill" style={{ width: `${act.progress ?? 50}%` }} />
+        {barValue !== null && (
+          <div className="task-progress" role="progressbar" aria-label={teamProgress ? 'Avance del equipo' : 'Avance'} aria-valuenow={barValue} aria-valuemin={0} aria-valuemax={100}>
+            <div className={`task-progress-fill ${teamProgress ? 'is-team' : ''}`} style={{ width: `${barValue}%` }} />
           </div>
         )}
       </div>
@@ -199,7 +368,9 @@ export function TaskCardBody({
         <div className="task-dates">
           <TaskDates start={act.startDate} end={act.endDate} overdueDays={overdue ? daysOverdue(act.endDate, today) : undefined} />
         </div>
-        <Avatar name={act.username} size={24} online={ownerOnline} />
+        {act.kind === 'shared' && sharedStats?.members && sharedStats.members.length > 0
+          ? <AvatarStack members={sharedStats.members} />
+          : <Avatar name={act.username} size={24} online={ownerOnline} />}
       </div>
     </>
   );
@@ -207,19 +378,21 @@ export function TaskCardBody({
 
 // Compact card used in the admin dashboard's per-user map.
 export function MiniTaskCard({
-  act, today, overdue, status,
+  act, today, overdue, status, sharedStats,
 }: {
   act: Activity;
   today: string;
   overdue: boolean;
   status: 'todo' | 'doing' | 'done' | 'cancelled';
+  sharedStats?: SharedStats;
 }) {
   return (
-    <div className={`admin-mini-card mini-${status} ${overdue ? 'overdue' : ''}`}>
+    <div className={`admin-mini-card mini-${status} ${overdue ? 'overdue' : ''} ${kindClass(act)}`}>
       <div className="mini-card-top">
         <div className="admin-mini-card-title">{act.title}</div>
         <div className="mini-card-flags">
-          {status === 'doing' && <Meta icon="donut_small" tip="Avance">{act.progress ?? 50}%</Meta>}
+          {status === 'doing' && act.kind !== 'shared' && <Meta icon="donut_small" tip="Avance">{act.progress ?? 50}%</Meta>}
+          <KindBadge act={act} sharedStats={sharedStats} />
           <PriorityFlag priority={act.priority} />
         </div>
       </div>

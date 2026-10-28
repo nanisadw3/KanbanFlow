@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { initDB, subscribeActivities, subscribeUsers, subscribeTeams } from './db';
+import { subscribeActivities, subscribeUsers, subscribeTeams } from './db';
 import type { Activity, User, Team } from './db';
 import './App.css';
 import { Icon, IconButton, Avatar, Segmented, PriorityFlag, TaskDates, Toast } from './ui';
 import { useToast } from './useToast';
-import { exportAllTasks } from './exportExcel';
+import ExportDialog from './ExportDialog';
 import { todayString, isOverdue, daysOverdue } from './dates';
 import { isLive } from './archive';
 import {
@@ -53,7 +53,7 @@ function StatsPage({ onBack }: { onBack: () => void }) {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [usersList, setUsersList] = useState<User[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
-  const [isExporting, setIsExporting] = useState(false);
+  const [isExportOpen, setIsExportOpen] = useState(false);
   const { toast, show: showToast } = useToast();
   const [sortBy, setSortBy] = useState<SortKey>('rate');
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -77,7 +77,6 @@ function StatsPage({ onBack }: { onBack: () => void }) {
   });
 
   useEffect(() => {
-    void initDB();
     const unsubActivities = subscribeActivities(setActivities);
     const unsubUsers = subscribeUsers(users => {
       setUsersList(users.filter(u => u.username.toLowerCase() !== 'admin'));
@@ -146,15 +145,6 @@ function StatsPage({ onBack }: { onBack: () => void }) {
       : a.endDate.localeCompare(b.endDate));
   const displayName = (username: string) => usersList.find(u => u.username.toLowerCase() === username.toLowerCase())?.fullName || username;
 
-  // Every user's NON-archived tasks (independent of the period/scope filters) as an .xlsx.
-  const handleExportExcel = async () => {
-    if (isExporting) return;
-    setIsExporting(true);
-    const result = await exportAllTasks({ activities, users: usersList, teams, today });
-    setIsExporting(false);
-    showToast(result.message, result.ok);
-  };
-
   const openBoard = (username: string) => { window.location.hash = `user-${encodeURIComponent(username)}`; };
   const openTask = (a: Activity) => { window.location.hash = a.teamId ? `team-${a.teamId}` : `user-${encodeURIComponent(a.username)}`; };
 
@@ -171,7 +161,7 @@ function StatsPage({ onBack }: { onBack: () => void }) {
           </div>
         </div>
         <div style={{ display: 'flex', gap: '0.6rem' }}>
-          <IconButton icon="download" label="Exportar a Excel" onClick={() => void handleExportExcel()} disabled={isExporting} size={40} />
+          <IconButton icon="download" label="Exportar a Excel" onClick={() => setIsExportOpen(true)} size={40} />
           <IconButton
             icon={theme === 'dark' ? 'light_mode' : 'dark_mode'}
             label="Cambiar tema"
@@ -504,6 +494,17 @@ function StatsPage({ onBack }: { onBack: () => void }) {
             })}
           </div>
         </section>
+      )}
+
+      {isExportOpen && (
+        <ExportDialog
+          activities={activities}
+          users={usersList}
+          teams={teams}
+          today={today}
+          onClose={() => setIsExportOpen(false)}
+          onDone={(result) => showToast(result.message, result.ok)}
+        />
       )}
 
       <Toast toast={toast} />

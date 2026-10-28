@@ -49,7 +49,7 @@ function styleHeader(ws: Sheet, columns: number) {
   ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: columns } };
 }
 
-function addTaskSheet(wb: InstanceType<ExcelNS['Workbook']>, name: string, rows: ExportTaskRow[]) {
+function addTaskSheet(wb: InstanceType<ExcelNS['Workbook']>, name: string, rows: ExportTaskRow[], withArchived: boolean) {
   const ws = wb.addWorksheet(name);
   ws.columns = [
     { header: 'Usuario', key: 'userName', width: 28 },
@@ -67,6 +67,7 @@ function addTaskSheet(wb: InstanceType<ExcelNS['Workbook']>, name: string, rows:
     { header: 'Ámbito', key: 'scope', width: 16 },
     { header: 'Creada', key: 'createdAt', width: 17 },
     { header: 'Completada', key: 'completedAt', width: 17 },
+    ...(withArchived ? [{ header: 'Archivada', key: 'archived', width: 11 }] : []),
   ];
   for (const r of rows) {
     const row = ws.addRow({
@@ -77,6 +78,7 @@ function addTaskSheet(wb: InstanceType<ExcelNS['Workbook']>, name: string, rows:
       overdue: r.overdue ? 'Sí' : 'No',
       createdAt: isoToLocalWallClock(r.createdAt),
       completedAt: isoToLocalWallClock(r.completedAt),
+      archived: r.archived ? 'Sí' : 'No',
     });
     row.getCell('start').numFmt = DATE_FMT;
     row.getCell('end').numFmt = DATE_FMT;
@@ -90,7 +92,7 @@ function addTaskSheet(wb: InstanceType<ExcelNS['Workbook']>, name: string, rows:
       row.getCell('overdueDays').font = { bold: true, color: { argb: RED } };
     }
   }
-  styleHeader(ws, 15);
+  styleHeader(ws, withArchived ? 16 : 15);
   return ws;
 }
 
@@ -111,16 +113,17 @@ export async function buildWorkbookBuffer(data: ExportData): Promise<Uint8Array>
     { header: 'Total', key: 'total', width: 9 },
     { header: 'Retrasadas', key: 'overdue', width: 12 },
     { header: '% completado', key: 'rate', width: 14 },
+    ...(data.includesArchived ? [{ header: 'Archivadas', key: 'archived', width: 12 }] : []),
   ];
   for (const s of data.summary) {
     const row = resumen.addRow(s);
     row.getCell('rate').numFmt = '0"%"';
     if (s.overdue > 0) row.getCell('overdue').font = { bold: true, color: { argb: RED } };
   }
-  styleHeader(resumen, 9);
+  styleHeader(resumen, data.includesArchived ? 10 : 9);
 
-  addTaskSheet(wb, 'Todas', data.tasks);
-  for (const u of data.byUser) addTaskSheet(wb, u.sheetName, u.rows);
+  addTaskSheet(wb, 'Todas', data.tasks, data.includesArchived);
+  for (const u of data.byUser) addTaskSheet(wb, u.sheetName, u.rows, data.includesArchived);
 
   return new Uint8Array(await wb.xlsx.writeBuffer());
 }
@@ -131,7 +134,7 @@ export async function exportTasksToExcel(data: ExportData, today: string): Promi
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `KanbanFlow_tareas_${today}.xlsx`;
+  link.download = `KanbanFlow_tareas${data.includesArchived ? '_con_archivadas' : ''}_${today}.xlsx`;
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -139,19 +142,20 @@ export async function exportTasksToExcel(data: ExportData, today: string): Promi
 }
 
 // One call for both screens: builds the data, downloads the file and reports what happened.
-export async function exportAllTasks(input: { activities: Activity[]; users: User[]; teams: Team[]; today: string }):
+export async function exportAllTasks(input: { activities: Activity[]; users: User[]; teams: Team[]; today: string; includeArchived?: boolean }):
   Promise<{ ok: boolean; tasks: number; people: number; message: string }> {
   const data = buildExportData(input);
   if (data.tasks.length === 0) {
-    return { ok: false, tasks: 0, people: 0, message: 'No hay tareas sin archivar para exportar.' };
+    return { ok: false, tasks: 0, people: 0, message: data.includesArchived ? 'No hay tareas para exportar.' : 'No hay tareas sin archivar para exportar.' };
   }
+  const archivedCount = data.tasks.filter(t => t.archived).length;
   try {
     await exportTasksToExcel(data, input.today);
     return {
       ok: true,
       tasks: data.tasks.length,
       people: data.byUser.length,
-      message: `Excel exportado: ${data.tasks.length} ${data.tasks.length === 1 ? 'tarea' : 'tareas'} de ${data.byUser.length} ${data.byUser.length === 1 ? 'persona' : 'personas'}.`,
+      message: `Excel exportado: ${data.tasks.length} ${data.tasks.length === 1 ? 'tarea' : 'tareas'} de ${data.byUser.length} ${data.byUser.length === 1 ? 'persona' : 'personas'}${data.includesArchived ? ` (${archivedCount} ${archivedCount === 1 ? 'archivada' : 'archivadas'})` : ''}.`,
     };
   } catch (err) {
     console.error('[Export] No se pudo generar el Excel:', err);

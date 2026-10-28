@@ -138,13 +138,4 @@ export function mailerFromConfig(cfg: MailConfig, fetchFn?: typeof fetch): Maile
   return createMailer(createGmailTransport({ clientId, clientSecret, refreshToken }, fetchFn), cfg.from ?? '');
 }
 
-export function mailerFromEnv(env: NodeJS.ProcessEnv = process.env): Mailer {
-  return mailerFromConfig({
-    clientId: env.GMAIL_CLIENT_ID,
-    clientSecret: env.GMAIL_CLIENT_SECRET,
-    refreshToken: env.GMAIL_REFRESH_TOKEN,
-    from: env.MAIL_FROM,
-  });
-}
-
-export { newTaskMessage, overdueMessage, testMessage } from './emailTemplates.ts';
+export { newTaskMessage, sharedTaskMessage, commentMessage, overdueMessage, testMessage } from './emailTemplates.ts';

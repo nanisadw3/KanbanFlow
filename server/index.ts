@@ -8,12 +8,18 @@ import path from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { scrypt as scryptCb, randomBytes, timingSafeEqual } from 'crypto';
 import { normalizeEmail } from './email.ts';
-import { createMailer, mailerFromConfig, newTaskMessage, testMessage, type Mailer } from './mailer.ts';
+import { createMailer, mailerFromConfig, newTaskMessage, sharedTaskMessage, commentMessage, testMessage, type Mailer } from './mailer.ts';
 import { ensureSettingsTable, getSetting, setSetting, resolveMailConfig, saveMailConfig, publicMailSettings } from './settings.ts';
 import { autoCompleteAtFull } from './autocomplete.ts';
 import { validateNewUser, createUser, touchLogin } from './users.ts';
 import { changeUserRole } from './roles.ts';
+import { updateProfile, parsePhoto } from './profile.ts';
 import { createOverdueChecker, localToday, msUntilNextLocalMidnight } from './overdue.ts';
+import { isRepeat, normalizeRule, ensureRecurrenceTable, createSeries, stopSeries, dropSeriesWhere, runRecurrences } from './recurrence.ts';
+import {
+  validateShared, createSharedTask, syncSharedFields, ensureCommentsTable, ensureCommentReadsTable, pruneComments, addComment, sharedRecipients,
+  markCommentsRead, commentRecipients, setParticipants,
+} from './shared.ts';
 
 interface Activity {
   id: string;
@@ -31,6 +37,14 @@ interface Activity {
   completedAt?: string | null;
   archived?: boolean;
   overdueNotifiedAt?: string | null;
+  // 'single' (a normal task), 'shared' (one copy per participant, linked by sharedId) or
+  // 'recurring' (an occurrence of a series; `repeat` comes from the series row).
+  kind?: 'single' | 'shared' | 'recurring';
+  sharedId?: string | null;
+  seriesId?: string | null;
+  repeat?: string | null;
+  repeatDay?: number | null;
+  repeatMonth?: number | null;
 }
 
 interface User {
@@ -39,6 +53,7 @@ interface User {
   role?: 'admin' | 'user';
   lastLogin: string;
   email?: string | null;
+  photoUpdatedAt?: string | null;
 }
 
 interface Team {
@@ -57,6 +72,23 @@ interface PresenceEntry {
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Profile photos. The users list only carries `photoUpdatedAt`; the image itself is fetched here
+// (the client adds ?v=<photoUpdatedAt>, so a changed photo is a new URL and can be cached forever).
+app.get('/api/avatar/:username', async (req, res) => {
+  const row = await db.get<{ photo: string | null }>('SELECT photo FROM users WHERE username = ? COLLATE NOCASE', [req.params.username]);
+  const photo = parsePhoto(row?.photo);
+  if (!photo) {
+    res.status(404).end();
+    return;
+  }
+  res.set({
+    'Content-Type': photo.mime,
+    'Cache-Control': 'public, max-age=31536000, immutable',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  res.send(photo.data);
+});
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
@@ -168,6 +200,23 @@ async function initSQLite() {
     // Column might already exist
   }
 
+  for (const sql of [
+    "ALTER TABLE activities ADD COLUMN kind TEXT NOT NULL DEFAULT 'single';",
+    'ALTER TABLE activities ADD COLUMN sharedId TEXT;',
+    'ALTER TABLE activities ADD COLUMN seriesId TEXT;',
+    'ALTER TABLE users ADD COLUMN photo TEXT;',
+    'ALTER TABLE users ADD COLUMN photoUpdatedAt TEXT;',
+  ]) {
+    try {
+      await db.exec(sql);
+    } catch {
+      // Column might already exist
+    }
+  }
+  await ensureRecurrenceTable(db);
+  await ensureCommentsTable(db);
+  await ensureCommentReadsTable(db);
+
   await ensureSettingsTable(db);
   mailer = mailerFromConfig(await resolveMailConfig(db));
 
@@ -245,9 +294,16 @@ async function ensureAdminPasswords() {
 
 // Helpers to fetch and emit dataset updates
 async function getActivities(): Promise<Activity[]> {
-  const rows = await db.all<any[]>('SELECT * FROM activities');
+  const rows = await db.all<any[]>(
+    'SELECT a.*, r.repeat AS repeat, r.day AS repeatDay, r.month AS repeatMonth FROM activities a LEFT JOIN recurrences r ON r.id = a.seriesId'
+  );
   return rows.map(r => ({
     ...r,
+    sharedId: r.sharedId || undefined,
+    seriesId: r.seriesId || undefined,
+    repeat: r.repeat || undefined,
+    repeatDay: r.repeatDay ?? undefined,
+    repeatMonth: r.repeatMonth ?? undefined,
     assignedBy: r.assignedBy || undefined,
     progress: r.progress !== null && r.progress !== undefined ? Number(r.progress) : undefined,
     teamId: r.teamId || undefined,
@@ -257,7 +313,7 @@ async function getActivities(): Promise<Activity[]> {
 }
 
 async function getUsers(): Promise<User[]> {
-  return await db.all<User[]>('SELECT username, fullName, role, lastLogin, email FROM users');
+  return await db.all<User[]>('SELECT username, fullName, role, lastLogin, email, photoUpdatedAt FROM users');
 }
 
 async function getTeams(): Promise<Team[]> {
@@ -272,8 +328,27 @@ async function getPresence(): Promise<PresenceEntry[]> {
   return await db.all<PresenceEntry[]>('SELECT * FROM presence');
 }
 
+async function getComments() {
+  return await db.all('SELECT id, sharedId, username, text, createdAt FROM comments ORDER BY createdAt');
+}
+
+async function getCommentReads() {
+  return await db.all('SELECT username, sharedId, lastReadAt FROM comment_reads');
+}
+
 async function broadcastActivities() {
   io.emit('activities:all', await getActivities());
+}
+
+async function broadcastComments() {
+  io.emit('comments:all', await getComments());
+  io.emit('commentReads:all', await getCommentReads());
+}
+
+// Deleting tasks may leave a shared task's comments with no copy to hang from.
+async function cleanupAfterDelete() {
+  await pruneComments(db);
+  await broadcastComments();
 }
 
 async function broadcastUsers() {
@@ -306,6 +381,45 @@ async function notifyNewTask(task: Activity) {
   await mailer.send(assignee.email, subject, text, html);
 }
 
+// A shared task tells every participant and every admin (once each, never the creator).
+async function notifySharedTask(task: { title: string; description: string; endDate: string; priority: string }, creator: string, usernames: string[], onlyTo?: string[]) {
+  if (!mailer.enabled) return;
+  const people = await db.all<{ username: string; fullName: string | null; email: string | null; role: string | null }[]>(
+    'SELECT username, fullName, email, role FROM users'
+  );
+  const nameOf = (u: string) => {
+    const p = people.find(x => x.username.toLowerCase() === u.toLowerCase());
+    return p?.fullName || p?.username || u;
+  };
+  const creatorName = nameOf(creator);
+  const names = usernames.map(nameOf);
+  const only = onlyTo ? new Set(onlyTo.map(u => u.toLowerCase())) : null;
+  for (const r of sharedRecipients(people, usernames, creator)) {
+    if (only && !only.has(r.username.toLowerCase())) continue;
+    const { subject, text, html } = sharedTaskMessage(task, creatorName, names, {
+      name: r.fullName || r.username, today: localToday(), appUrl: process.env.APP_URL, participant: r.participant,
+    });
+    await mailer.send(r.email, subject, text, html);
+  }
+}
+
+// A comment on a shared task emails the other participants, but only the first unread one each (see commentRecipients).
+async function notifyComment(sharedId: string, author: string, text: string) {
+  if (!mailer.enabled) return;
+  const task = await db.get<{ title: string; description: string; endDate: string; priority: string }>(
+    'SELECT title, description, endDate, priority FROM activities WHERE sharedId = ? LIMIT 1', [sharedId]
+  );
+  const authorRow = await db.get<{ username: string; fullName: string | null }>('SELECT username, fullName FROM users WHERE username = ? COLLATE NOCASE', [author]);
+  if (!task || !authorRow) return;
+  const authorName = authorRow.fullName || authorRow.username;
+  for (const r of await commentRecipients(db, sharedId, authorRow.username)) {
+    const { subject, text: body, html } = commentMessage(task, authorName, text, {
+      name: r.fullName || r.username, appUrl: process.env.APP_URL,
+    });
+    await mailer.send(r.email, subject, body, html);
+  }
+}
+
 // Socket Connection handling
 io.on('connection', async (socket) => {
   // Send initial data to newly connected client
@@ -313,6 +427,8 @@ io.on('connection', async (socket) => {
   socket.emit('users:all', await getUsers());
   socket.emit('teams:all', await getTeams());
   socket.emit('presence:all', await getPresence());
+  socket.emit('comments:all', await getComments());
+  socket.emit('commentReads:all', await getCommentReads());
 
   // Activity handlers
   socket.on('activity:add', async (activityData: Omit<Activity, 'id' | 'createdAt'>) => {
@@ -321,15 +437,28 @@ io.on('connection', async (socket) => {
     const completedAt = activityData.status === 'done' ? createdAt : null;
     const progress = activityData.status === 'done' ? 100 : activityData.status === 'doing' ? (typeof activityData.progress === 'number' ? activityData.progress : 50) : (typeof activityData.progress === 'number' ? activityData.progress : 0);
 
+    // A repeating task has no dates of its own: the first occurrence is created today and the
+    // series row keeps the template and the rule (which weekday / day of the month it comes back).
+    const rule = isRepeat(activityData.repeat) ? normalizeRule(activityData.repeat, activityData.repeatDay, activityData.repeatMonth) : null;
+    const startDate = rule ? localToday() : activityData.startDate;
+    const endDate = rule ? '' : activityData.endDate;
+    const seriesId = rule
+      ? await createSeries(db, {
+          rule, title: activityData.title, description: activityData.description,
+          priority: activityData.priority, username: activityData.username, assignedBy: activityData.assignedBy || null,
+          teamId: activityData.teamId || null, startDate,
+        })
+      : null;
+
     await db.run(
-      `INSERT INTO activities (id, title, description, startDate, endDate, status, username, createdAt, assignedBy, priority, progress, teamId, completedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO activities (id, title, description, startDate, endDate, status, username, createdAt, assignedBy, priority, progress, teamId, completedAt, kind, seriesId)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         activityData.title,
         activityData.description,
-        activityData.startDate,
-        activityData.endDate,
+        startDate,
+        endDate,
         activityData.status,
         activityData.username,
         createdAt,
@@ -338,11 +467,72 @@ io.on('connection', async (socket) => {
         progress,
         activityData.teamId || null,
         completedAt,
+        seriesId ? 'recurring' : 'single',
+        seriesId,
       ]
     );
-    void notifyNewTask({ ...activityData, id, createdAt }).catch(err => console.error('[Mailer] notifyNewTask falló:', err));
+    void notifyNewTask({ ...activityData, startDate, endDate, id, createdAt }).catch(err => console.error('[Mailer] notifyNewTask falló:', err));
     await broadcastActivities();
     void checkOverdue(); // a task created already overdue is notified right away
+  });
+
+  // A shared task: one copy per selected person, then one email to the participants and the admins.
+  socket.on('activity:addShared', async (
+    payload: Record<string, unknown>,
+    ack?: (res: { ok: boolean; error?: string }) => void
+  ) => {
+    const reply = ack ?? (() => {});
+    const known = (await db.all<{ username: string }[]>('SELECT username FROM users')).map(u => u.username);
+    const valid = validateShared(payload ?? {}, known);
+    if (!valid.ok) return reply({ ok: false, error: valid.error });
+    const task = valid.task;
+    await createSharedTask(db, task);
+    void notifySharedTask(task, task.assignedBy, task.usernames).catch(err => console.error('[Mailer] notifySharedTask falló:', err));
+    await broadcastActivities();
+    void checkOverdue();
+    reply({ ok: true });
+  });
+
+  socket.on('comment:add', async (
+    payload: { sharedId?: string; username?: string; text?: string },
+    ack?: (res: { ok: boolean; error?: string }) => void
+  ) => {
+    const reply = ack ?? (() => {});
+    const result = await addComment(db, payload ?? {});
+    if (result.ok) {
+      await broadcastComments();
+      void notifyComment(String(payload.sharedId), String(payload.username), String(payload.text)).catch(err => console.error('[Mailer] notifyComment falló:', err));
+    }
+    reply(result);
+  });
+
+  // Opening a shared task's comments marks them read for that person (drives the "new comments" badge).
+  socket.on('comments:read', async (payload: { username?: string; sharedId?: string }) => {
+    const result = await markCommentsRead(db, payload ?? {});
+    if (result.ok) io.emit('commentReads:all', await getCommentReads());
+  });
+
+  // Adds or removes people on a shared task. Added people get the same email as at creation.
+  socket.on('shared:setParticipants', async (
+    payload: { sharedId?: string; usernames?: string[]; by?: string },
+    ack?: (res: { ok: boolean; error?: string }) => void
+  ) => {
+    const reply = ack ?? (() => {});
+    const result = await setParticipants(db, payload ?? {});
+    if (!result.ok) return reply(result);
+    await broadcastActivities();
+    await cleanupAfterDelete();
+    if (result.added.length > 0) {
+      void notifySharedTask(result.task, result.by, result.all, result.added).catch(err => console.error('[Mailer] notifySharedTask falló:', err));
+    }
+    void checkOverdue();
+    reply({ ok: true });
+  });
+
+  socket.on('series:stop', async (id: string) => {
+    const row = await db.get<{ seriesId: string | null }>('SELECT seriesId FROM activities WHERE id = ?', [id]);
+    if (row?.seriesId) await stopSeries(db, row.seriesId);
+    await broadcastActivities();
   });
 
   socket.on('activity:updateStatus', async ({ id, status, progress }: { id: string; status: Activity['status']; progress?: number }) => {
@@ -400,23 +590,40 @@ io.on('connection', async (socket) => {
         updatedAct.id,
       ]
     );
+    // Editing the task itself reaches every copy of a shared task (status/progress stay per person).
+    const edited = await db.get<{ sharedId: string | null }>('SELECT sharedId FROM activities WHERE id = ?', [updatedAct.id]);
+    if (edited?.sharedId) {
+      await syncSharedFields(db, edited.sharedId, {
+        title: updatedAct.title, description: updatedAct.description, startDate: updatedAct.startDate,
+        endDate: updatedAct.endDate, priority: updatedAct.priority,
+      });
+    }
     await broadcastActivities();
     void checkOverdue(); // a new/changed end date that is already past is notified right away
   });
 
+  // Deleting a shared task removes only that person's copy. Deleting a repeating task removes it
+  // for good: the series stops too, so nothing is regenerated.
   socket.on('activity:delete', async (id: string) => {
+    const row = await db.get<{ seriesId: string | null }>('SELECT seriesId FROM activities WHERE id = ?', [id]);
     await db.run('DELETE FROM activities WHERE id = ?', [id]);
+    if (row?.seriesId) await stopSeries(db, row.seriesId);
     await broadcastActivities();
+    await cleanupAfterDelete();
   });
 
   socket.on('activity:clearUser', async (username: string) => {
+    await dropSeriesWhere(db, 'username', username);
     await db.run('DELETE FROM activities WHERE LOWER(username) = LOWER(?)', [username]);
     await broadcastActivities();
+    await cleanupAfterDelete();
   });
 
   socket.on('activity:clearTeam', async (teamId: string) => {
+    await dropSeriesWhere(db, 'teamId', teamId);
     await db.run('DELETE FROM activities WHERE teamId = ?', [teamId]);
     await broadcastActivities();
+    await cleanupAfterDelete();
   });
 
   // User handlers
@@ -519,7 +726,38 @@ io.on('connection', async (socket) => {
     reply({ ok: true });
   });
 
+  // A user edits their own profile (name, username, email, photo). An administrator account must
+  // also prove its password, like every other admin action; regular accounts have no password (the
+  // same known gap as the rest of the app). Renaming is refused for the built-in admin and the role manager.
+  socket.on('profile:update', async (
+    payload: { username?: string; password?: string; fullName?: string; newUsername?: string; email?: string; photo?: string | null },
+    ack?: (res: { ok: boolean; error?: string; username?: string }) => void
+  ) => {
+    const reply = ack ?? (() => {});
+    const username = typeof payload?.username === 'string' ? payload.username : '';
+    const row = await db.get<{ username: string; role: string | null }>('SELECT username, role FROM users WHERE username = ? COLLATE NOCASE', [username]);
+    if (!row) return reply({ ok: false, error: 'not_found' });
+    if (isAdminRow(row)) {
+      if (!(await checkAdmin(row.username, payload.password))) return reply(await failAuth('bad_password'));
+      failedAuthAttempts = 0;
+    }
+    const result = await updateProfile(db, row.username, {
+      fullName: payload.fullName, newUsername: payload.newUsername, email: payload.email, photo: payload.photo,
+    });
+    if (!result.ok) return reply(result);
+    await broadcastUsers();
+    if (result.username !== row.username) {
+      await broadcastActivities();
+      await broadcastTeams();
+      await broadcastComments();
+      await broadcastPresence();
+    }
+    reply(result);
+  });
+
   socket.on('user:delete', async (username: string) => {
+    await dropSeriesWhere(db, 'username', username);
+    await db.run('DELETE FROM comment_reads WHERE LOWER(username) = LOWER(?)', [username]);
     await db.run('DELETE FROM users WHERE LOWER(username) = LOWER(?)', [username]);
     await db.run('DELETE FROM activities WHERE LOWER(username) = LOWER(?)', [username]);
 
@@ -539,6 +777,7 @@ io.on('connection', async (socket) => {
     await broadcastUsers();
     await broadcastActivities();
     await broadcastTeams();
+    await cleanupAfterDelete();
   });
 
   // Mail settings. Reading is open (the secrets never leave the server); changing or
@@ -617,10 +856,12 @@ io.on('connection', async (socket) => {
   });
 
   socket.on('team:delete', async (teamId: string) => {
+    await dropSeriesWhere(db, 'teamId', teamId);
     await db.run('DELETE FROM teams WHERE id = ?', [teamId]);
     await db.run('DELETE FROM activities WHERE teamId = ?', [teamId]);
     await broadcastTeams();
     await broadcastActivities();
+    await cleanupAfterDelete();
   });
 
   // Presence handlers
@@ -660,10 +901,32 @@ async function checkOverdue() {
 }
 setInterval(checkOverdue, 5 * 60 * 1000); // safety net; changes and midnight trigger passes directly
 
-// A task becomes overdue at local midnight (its end date is then in the past): fire a pass at
-// that exact moment instead of waiting for the next 5-minute tick. Recomputed every time.
+// Creates the occurrences of repeating tasks that came due, then lets everyone see them. The
+// new task may itself start already overdue, so an overdue pass follows.
+let generatingRecurrences = false;
+async function checkRecurrences() {
+  if (generatingRecurrences) return;
+  generatingRecurrences = true;
+  try {
+    const n = await runRecurrences(db, localToday());
+    if (n > 0) {
+      console.log(`[Kanban Server] ${n} tarea(s) repetitiva(s) generada(s)`);
+      await broadcastActivities();
+      void checkOverdue();
+    }
+  } catch (err) {
+    console.error('[Kanban Server] Falló la generación de tareas repetitivas:', err);
+  } finally {
+    generatingRecurrences = false;
+  }
+}
+setInterval(checkRecurrences, 5 * 60 * 1000);
+
+// A task becomes overdue (and a repeating one comes due) at local midnight: fire a pass at that
+// exact moment instead of waiting for the next 5-minute tick. Recomputed every time.
 function scheduleMidnightCheck() {
   setTimeout(() => {
+    void checkRecurrences();
     void checkOverdue();
     scheduleMidnightCheck();
   }, msUntilNextLocalMidnight() + 2000);
@@ -686,6 +949,7 @@ const PORT = process.env.PORT || 3001;
 initSQLite().then(() => {
   httpServer.listen(PORT, () => {
     console.log(`[Kanban Server] Running on http://localhost:${PORT} with SQLite & WebSockets`);
+    void checkRecurrences();
     void checkOverdue();
     scheduleMidnightCheck();
   });

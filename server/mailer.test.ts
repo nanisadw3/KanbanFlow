@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createMailer, mailerFromEnv, mailerFromConfig, createGmailTransport, buildRawMessage, newTaskMessage, overdueMessage, testMessage } from './mailer.ts';
+import { createMailer, mailerFromConfig, createGmailTransport, buildRawMessage, newTaskMessage, sharedTaskMessage, commentMessage, overdueMessage, testMessage } from './mailer.ts';
 
 const task = { title: 'Entregar reporte', description: 'Reporte mensual', endDate: '2026-10-20', priority: 'alta' };
 
@@ -20,11 +20,6 @@ test('mailer deshabilitado no envía', async () => {
   const mailer = createMailer(null, 'k@x.com');
   assert.equal(mailer.enabled, false);
   assert.equal(await mailer.send('ana@x.com', 's', 't'), false);
-});
-
-test('mailerFromEnv queda deshabilitado sin variables GMAIL_*', () => {
-  assert.equal(mailerFromEnv({}).enabled, false);
-  assert.equal(mailerFromEnv({ GMAIL_CLIENT_ID: 'id', GMAIL_CLIENT_SECRET: 's', GMAIL_REFRESH_TOKEN: 'r' }).enabled, true);
 });
 
 test('plantillas incluyen título, fecha y quién asignó', () => {
@@ -184,4 +179,42 @@ test('un rechazo de Gmail al enviar se reporta y el 401 descarta el token', asyn
   await assert.rejects(transport.sendMail({ to: 'a@x.com', subject: 's', text: 't' }), /Invalid Credentials/);
   await transport.sendMail({ to: 'a@x.com', subject: 's', text: 't' });
   assert.equal(tokenRequests, 2);
+});
+
+test('tarea compartida: lista a los participantes y distingue al administrador que solo recibe el aviso', () => {
+  const p = sharedTaskMessage(task, 'Roberto', ['Ana', 'Beto'], { name: 'Ana P', today: '2026-10-15' });
+  assert.match(p.subject, /Nueva tarea compartida: Entregar reporte/);
+  assert.match(p.text, /formas parte del grupo: Ana, Beto/);
+  assert.match(p.text, /5 días/);
+  const admin = sharedTaskMessage(task, 'Roberto', ['Ana', 'Beto'], { participant: false });
+  assert.match(admin.text, /eres administrador/);
+  assert.ok(!/formas parte/.test(admin.text));
+});
+
+test('tarea compartida: el HTML escapa nombres y título', () => {
+  const { html } = sharedTaskMessage({ ...task, title: '<b>x</b>' }, '<i>yo</i>', ['<u>Ana</u>']);
+  assert.ok(!html.includes('<b>x</b>') && !html.includes('<i>yo</i>') && !html.includes('<u>Ana</u>'));
+});
+
+test('una tarea sin fecha de fin (repetitiva) no muestra fecha ni cuenta regresiva', () => {
+  const m = newTaskMessage({ ...task, endDate: '' }, 'Roberto', { today: '2026-10-15' });
+  assert.ok(!/Fecha de fin|Vence|días para|ya pasó/.test(m.text));
+  assert.ok(!m.html.includes('📅'));
+});
+
+test('correo de comentario: cita el comentario, nombra a quien lo escribió y escapa el HTML', () => {
+  const m = commentMessage(task, 'Beto Ruiz', 'Ya subí los datos.\nFalta la gráfica', { name: 'Ana Pérez' });
+  assert.match(m.subject, /Beto Ruiz comentó en: Entregar reporte/);
+  assert.match(m.text, /¡Hola, Ana! 👋/);
+  assert.match(m.text, /“Ya subí los datos\.\nFalta la gráfica”/);
+  assert.match(m.html, /Ya subí los datos\.<br>Falta la gráfica/);
+  const evil = commentMessage({ ...task, title: '<b>t</b>' }, '<i>x</i>', '<script>alert(1)</script>');
+  assert.ok(!evil.html.includes('<script>') && !evil.html.includes('<i>x</i>') && !evil.html.includes('<b>t</b>'));
+  assert.match(evil.html, /&lt;script&gt;/);
+});
+
+test('correo de comentario: recorta los comentarios muy largos', () => {
+  const m = commentMessage(task, 'Beto', 'a'.repeat(1000));
+  assert.ok(m.text.length < 900);
+  assert.match(m.text, /…/);
 });
