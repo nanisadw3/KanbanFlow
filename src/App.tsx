@@ -6,8 +6,9 @@ import {
   subscribePresence,
   subscribeComments,
   subscribeCommentReads,
-  subscribeMaintenance,
-  setMaintenance,
+  subscribeNotices,
+  publishNotice,
+  endNotice,
   markCommentsRead,
   setSharedParticipants,
   changeTaskKind,
@@ -39,7 +40,7 @@ import {
   updateProfile,
   avatarUrl,
 } from './db';
-import type { Activity, User, Team, PresenceEntry, TaskComment, CommentRead, MaintenanceNotice } from './db';
+import type { Activity, User, Team, PresenceEntry, TaskComment, CommentRead, Notice } from './db';
 // Using Material Symbols Rounded via Google Fonts, no Lucide React imports needed
 import './App.css';
 import { todayString, isOverdue as isOverdueOn, daysOverdue, formatShortDate } from './dates';
@@ -129,14 +130,21 @@ function App() {
   // Shown right after logging in: tasks assigned since the previous login + overdue ones.
   const [loginSummary, setLoginSummary] = useState<{ name: string; summary: LoginSummary } | null>(null);
   // Role manager modal (only the user "Inaki" gets the button; the server enforces it too).
-  // Maintenance notice (everyone sees the banner; only Inaki gets the button, and the server enforces it).
-  const [maintenance, setMaintenanceNotice] = useState<MaintenanceNotice | null>(null);
-  const [isMaintOpen, setIsMaintOpen] = useState(false);
-  const [maintMessage, setMaintMessage] = useState('');
-  const [maintEmail, setMaintEmail] = useState(false);
-  const [maintPass, setMaintPass] = useState('');
-  const [maintBusy, setMaintBusy] = useState(false);
-  const [maintError, setMaintError] = useState('');
+  // Announcements: everyone sees the banners; any admin can publish a normal one (it expires), only Inaki
+  // the maintenance one. The server enforces it too.
+  const [notices, setNotices] = useState<Notice[]>([]);
+  const [isNoticeOpen, setIsNoticeOpen] = useState(false);
+  const [noticeKind, setNoticeKind] = useState<Notice['kind']>('normal');
+  const [noticeMessage, setNoticeMessage] = useState('');
+  const [noticeMinutes, setNoticeMinutes] = useState(60);
+  const [noticeEmail, setNoticeEmail] = useState(false);
+  const [noticePass, setNoticePass] = useState('');
+  const [noticeBusy, setNoticeBusy] = useState(false);
+  const [noticeError, setNoticeError] = useState('');
+  // Normal notices can be closed by each person (remembered in this browser only).
+  const [dismissedNotices, setDismissedNotices] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('dismissedNotices') || '[]'); } catch { return []; }
+  });
   const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
   const [roleTarget, setRoleTarget] = useState('');
   const [roleChoice, setRoleChoice] = useState<'admin' | 'user'>('user');
@@ -302,7 +310,7 @@ function App() {
     const unsubPresence = subscribePresence(setPresence);
     const unsubComments = subscribeComments(setComments);
     const unsubCommentReads = subscribeCommentReads(setCommentReads);
-    const unsubMaintenance = subscribeMaintenance(setMaintenanceNotice);
+    const unsubNotices = subscribeNotices(setNotices);
     return () => {
       unsubActivities();
       unsubUsers();
@@ -310,7 +318,7 @@ function App() {
       unsubPresence();
       unsubComments();
       unsubCommentReads();
-      unsubMaintenance();
+      unsubNotices();
     };
   }, []);
 
@@ -466,41 +474,59 @@ function App() {
     showLoginSummary(loggedIn, existingUser.lastLogin);
   };
 
-  const openMaintModal = () => {
-    setMaintMessage('');
-    setMaintEmail(false);
-    setMaintPass('');
-    setMaintError('');
-    setIsMaintOpen(true);
+  const openNoticeModal = () => {
+    setNoticeKind('normal');
+    setNoticeMessage('');
+    setNoticeMinutes(60);
+    setNoticeEmail(false);
+    setNoticePass('');
+    setNoticeError('');
+    setIsNoticeOpen(true);
   };
 
-  const handleMaintenance = async (action: 'start' | 'end') => {
+  const noticeErrorText = (error?: string) => ({
+    bad_password: 'Tu contraseña de administrador es incorrecta.',
+    forbidden: 'Solo el administrador principal puede publicar o quitar el aviso de mantenimiento.',
+    empty: 'Escribe el mensaje del aviso.',
+    too_long: 'El mensaje es demasiado largo (máximo 500 caracteres).',
+    not_found: 'Ese aviso ya no existe.',
+    timeout: 'No se pudo conectar con el servidor.',
+  } as Record<string, string>)[error ?? ''] ?? 'No se pudo completar la acción.';
+
+  const handlePublishNotice = async () => {
     if (!user) return;
-    setMaintBusy(true);
-    setMaintError('');
-    const res = await setMaintenance({
-      adminUsername: user.username, adminPassword: maintPass, action,
-      message: action === 'start' ? maintMessage : undefined, sendEmail: action === 'start' && maintEmail,
+    setNoticeBusy(true);
+    setNoticeError('');
+    const res = await publishNotice({
+      adminUsername: user.username, adminPassword: noticePass, kind: noticeKind,
+      message: noticeMessage, minutes: noticeMinutes, sendEmail: noticeEmail,
     });
-    setMaintBusy(false);
-    if (!res.ok) {
-      const messages: Record<string, string> = {
-        bad_password: 'Tu contraseña de administrador es incorrecta.',
-        forbidden: 'Solo el administrador principal puede publicar este aviso.',
-        too_long: 'El mensaje es demasiado largo (máximo 500 caracteres).',
-        timeout: 'No se pudo conectar con el servidor.',
-      };
-      setMaintError(messages[res.error ?? ''] ?? 'No se pudo publicar el aviso.');
-      return;
-    }
-    if (action === 'end') {
-      showToast('El aviso de mantenimiento terminó.', true);
-    } else if (maintEmail && res.emailSkipped) {
+    setNoticeBusy(false);
+    if (!res.ok) { setNoticeError(noticeErrorText(res.error)); return; }
+    if (noticeEmail && res.emailSkipped) {
       showToast('Aviso publicado, pero el correo no está configurado: no se envió ningún correo.', false);
     } else {
-      showToast(maintEmail && res.emailed ? `Aviso publicado y enviado por correo a ${res.emailed} ${res.emailed === 1 ? 'persona' : 'personas'}.` : 'Aviso publicado para todos.', true);
+      showToast(noticeEmail && res.emailed ? `Aviso publicado y enviado por correo a ${res.emailed} ${res.emailed === 1 ? 'persona' : 'personas'}.` : 'Aviso publicado para todos.', true);
     }
-    setIsMaintOpen(false);
+    setIsNoticeOpen(false);
+  };
+
+  const handleEndNotice = async (id: string) => {
+    if (!user) return;
+    setNoticeBusy(true);
+    setNoticeError('');
+    const res = await endNotice({ adminUsername: user.username, adminPassword: noticePass, id });
+    setNoticeBusy(false);
+    if (!res.ok) { setNoticeError(noticeErrorText(res.error)); return; }
+    showToast('El aviso se quitó.', true);
+  };
+
+  const dismissNotice = (id: string) => {
+    setDismissedNotices(prev => {
+      const next = [...prev, id].slice(-50);
+      try { localStorage.setItem('dismissedNotices', JSON.stringify(next)); } catch { /* private mode: the banner just comes back on reload */ }
+      return next;
+    });
   };
 
   const openRoleModal = () => {
@@ -1506,20 +1532,35 @@ function App() {
     );
   };
 
-  const maintenanceBanner = maintenance && (
-    <div className="maintenance-banner animate-fade-in" role="status">
-      <Icon name="construction" size={22} />
-      <div className="maintenance-banner-text">
-        <strong>KanbanFlow está en mantenimiento</strong>
-        <span>{maintenance.message}</span>
-      </div>
+  // The notices still up (expired ones drop off on the next tick); a normal one also hides once closed.
+  const activeNotices = notices.filter(n => !n.expiresAt || new Date(n.expiresAt).getTime() > now);
+  const visibleNotices = activeNotices.filter(n => n.kind === 'maintenance' || !dismissedNotices.includes(n.id));
+  const noticeBanners = visibleNotices.length > 0 && (
+    <div className="notice-stack">
+      {visibleNotices.map(n => (
+        <div key={n.id} className={`notice-banner notice-banner-${n.kind} animate-fade-in`} role="status">
+          <Icon name={n.kind === 'maintenance' ? 'construction' : 'campaign'} size={22} />
+          <div className="notice-banner-text">
+            <strong>{n.kind === 'maintenance' ? 'KanbanFlow está en mantenimiento' : 'Aviso'}</strong>
+            <span>{n.message}</span>
+            {n.kind === 'normal' && (
+              <small>
+                {displayNameOf(n.createdBy)}{n.expiresAt ? ` · hasta las ${new Date(n.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}
+              </small>
+            )}
+          </div>
+          {n.kind === 'normal' && (
+            <IconButton icon="close" label="Cerrar aviso" size={30} onClick={() => dismissNotice(n.id)} />
+          )}
+        </div>
+      ))}
     </div>
   );
 
   if (!user) {
     return (
       <div className="auth-wrapper">
-        {maintenanceBanner}
+        {noticeBanners}
         <div className="glass-panel auth-card animate-fade-in">
           <h1 className="auth-logo">Kanban<span className="auth-logo-accent">Flow</span></h1>
           <p className="auth-subtitle">Gestiona tus tareas</p>
@@ -1578,7 +1619,7 @@ function App() {
 
   return (
     <div className={`app-container ${isAdmin && !viewingUserAsAdmin && !viewingTeam ? 'app-container-wide' : ''}`}>
-      {maintenanceBanner}
+      {noticeBanners}
       {/* Top Navbar */}
       <div className="glass-panel board-header animate-fade-in">
         <div className="user-badge">
@@ -1620,9 +1661,12 @@ function App() {
               {user.username.toLowerCase() === 'inaki' && (
                 <IconButton icon="manage_accounts" label="Cambiar rol de usuario" onClick={openRoleModal} />
               )}
-              {user.username.toLowerCase() === 'inaki' && (
-                <IconButton icon="campaign" label={maintenance ? 'Aviso de mantenimiento (activo)' : 'Avisar de mantenimiento'} variant={maintenance ? 'danger' : 'ghost'} onClick={openMaintModal} />
-              )}
+              <IconButton
+                icon="campaign"
+                label={activeNotices.length > 0 ? `Avisos (${activeNotices.length} activo${activeNotices.length === 1 ? '' : 's'})` : 'Publicar un aviso'}
+                variant={activeNotices.some(n => n.kind === 'maintenance') ? 'danger' : activeNotices.length > 0 ? 'tonal' : 'ghost'}
+                onClick={openNoticeModal}
+              />
               <IconButton icon="download" label="Exportar a Excel" onClick={() => setIsExportOpen(true)} />
             </>
           )}
@@ -3016,85 +3060,135 @@ function App() {
         </div>
       )}
 
-      {/* Maintenance notice (only Inaki) */}
-      {isMaintOpen && user && (
-        <div className="modal-overlay" onClick={() => setIsMaintOpen(false)}>
-          <div className="glass-panel modal-content animate-scale-in" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '540px' }}>
-            <div className="modal-header">
-              <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <Icon name="campaign" style={{ color: 'var(--color-primary)' }} />
-                Aviso de mantenimiento
-              </h3>
-              <button type="button" className="modal-close" onClick={() => setIsMaintOpen(false)} aria-label="Cerrar">
-                <Icon name="close" />
-              </button>
-            </div>
-
-            <form
-              onSubmit={(e) => { e.preventDefault(); void handleMaintenance('start'); }}
-              style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}
-            >
-              {maintenance && (
-                <p className="field-hint field-hint-strong">
-                  Ya hay un aviso activo, publicado el {new Date(maintenance.startedAt).toLocaleString()} — si publicas otro, lo reemplaza.
-                </p>
-              )}
-              <div className="form-group">
-                <FieldLabel icon="chat">Mensaje (opcional)</FieldLabel>
-                <textarea
-                  className="form-input"
-                  rows={4}
-                  maxLength={500}
-                  placeholder="Vamos a agregar una nueva funcionalidad. KanbanFlow estará en mantenimiento por un momento y puede que no esté disponible unos minutos."
-                  value={maintMessage}
-                  onChange={(e) => setMaintMessage(e.target.value)}
-                />
-                <p className="field-hint">Todos los que tengan abierta la página lo ven al instante en un banner; quien entre después también.</p>
+      {/* Announcements: any admin; the maintenance kind only for Inaki */}
+      {isNoticeOpen && user && (() => {
+        const isManager = user.username.toLowerCase() === 'inaki';
+        const kind = isManager ? noticeKind : 'normal';
+        return (
+          <div className="modal-overlay" onClick={() => setIsNoticeOpen(false)}>
+            <div className="glass-panel modal-content animate-scale-in" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '540px' }}>
+              <div className="modal-header">
+                <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Icon name="campaign" style={{ color: 'var(--color-primary)' }} />
+                  Avisos
+                </h3>
+                <button type="button" className="modal-close" onClick={() => setIsNoticeOpen(false)} aria-label="Cerrar">
+                  <Icon name="close" />
+                </button>
               </div>
 
-              <label className="role-radio">
-                <input type="checkbox" checked={maintEmail} onChange={(e) => setMaintEmail(e.target.checked)} />
-                <span>También enviar por correo a todos los que tengan correo ({users.filter(u => u.email).length})</span>
-              </label>
-
-              <div className="form-group">
-                <FieldLabel icon="admin_panel_settings">Tu contraseña de administrador</FieldLabel>
-                <input
-                  type="password"
-                  className="form-input"
-                  placeholder="Necesaria para confirmar"
-                  autoComplete="current-password"
-                  value={maintPass}
-                  onChange={(e) => setMaintPass(e.target.value)}
-                  required
-                />
-              </div>
-
-              {maintError && <p className="form-error" style={{ margin: 0, fontSize: '0.85rem' }}>{maintError}</p>}
-
-              <div className="modal-footer">
-                {maintenance && (
-                  <button
-                    type="button"
-                    className="btn btn-secondary push-left"
-                    disabled={maintBusy || !maintPass}
-                    onClick={() => void handleMaintenance('end')}
-                    style={{ width: 'auto' }}
-                  >
-                    <Icon name="check_circle" size={18} /> Terminar aviso
-                  </button>
+              <form
+                onSubmit={(e) => { e.preventDefault(); void handlePublishNotice(); }}
+                style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}
+              >
+                {activeNotices.length > 0 && (
+                  <div className="form-group">
+                    <FieldLabel icon="notifications_active">Avisos activos</FieldLabel>
+                    <ul className="notice-list">
+                      {activeNotices.map(n => (
+                        <li key={n.id} className={`notice-list-item notice-list-${n.kind}`}>
+                          <Icon name={n.kind === 'maintenance' ? 'construction' : 'campaign'} size={18} />
+                          <span className="notice-list-text">
+                            <strong>{n.kind === 'maintenance' ? 'Mantenimiento' : 'Normal'}</strong>
+                            <span>{n.message}</span>
+                            <small>
+                              {displayNameOf(n.createdBy)}{n.expiresAt ? ` · hasta las ${new Date(n.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ' · hasta que se quite'}
+                            </small>
+                          </span>
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            style={{ width: 'auto' }}
+                            disabled={noticeBusy || !noticePass || (n.kind === 'maintenance' && !isManager)}
+                            data-tip={!noticePass ? 'Escribe tu contraseña abajo para quitarlo' : n.kind === 'maintenance' && !isManager ? 'Solo el administrador principal' : undefined}
+                            onClick={() => void handleEndNotice(n.id)}
+                          >
+                            Quitar
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
-                <button type="button" className="btn btn-secondary" onClick={() => setIsMaintOpen(false)} style={{ width: 'auto' }}>
-                  Cancelar
-                </button>
-                <button type="submit" className="btn btn-primary" disabled={maintBusy} style={{ width: 'auto' }}>
-                  <Icon name="campaign" size={18} /> Avisar a todos
-                </button>
-              </div>
-            </form>
+
+                {isManager && (
+                  <div className="form-group">
+                    <FieldLabel icon="category">Tipo de aviso</FieldLabel>
+                    <Segmented
+                      ariaLabel="Tipo de aviso"
+                      value={kind}
+                      onChange={(v) => setNoticeKind(v)}
+                      options={[
+                        { value: 'normal', label: 'Normal', icon: 'campaign', color: '--color-primary' },
+                        { value: 'maintenance', label: 'Mantenimiento', icon: 'construction', color: '--color-todo' },
+                      ]}
+                    />
+                  </div>
+                )}
+
+                <div className="form-group">
+                  <FieldLabel icon="chat">{kind === 'normal' ? 'Mensaje' : 'Mensaje (opcional)'}</FieldLabel>
+                  <textarea
+                    className="form-input"
+                    rows={4}
+                    maxLength={500}
+                    required={kind === 'normal'}
+                    placeholder={kind === 'normal' ? 'Escribe el aviso para todos…' : 'Vamos a agregar una nueva funcionalidad. KanbanFlow estará en mantenimiento por un momento y puede que no esté disponible unos minutos.'}
+                    value={noticeMessage}
+                    onChange={(e) => setNoticeMessage(e.target.value)}
+                  />
+                  <p className="field-hint">
+                    {kind === 'normal'
+                      ? 'Lo ven al instante todos los que tengan abierta la página, y quien entre mientras dure.'
+                      : 'Se queda como banner para todos hasta que lo quites. Es solo un aviso: nadie queda bloqueado.'}
+                  </p>
+                </div>
+
+                {kind === 'normal' && (
+                  <div className="form-group">
+                    <FieldLabel icon="timer">Cuánto tiempo se muestra</FieldLabel>
+                    <select className="form-input" value={noticeMinutes} onChange={(e) => setNoticeMinutes(Number(e.target.value))}>
+                      <option value={15}>15 minutos</option>
+                      <option value={60}>1 hora</option>
+                      <option value={240}>4 horas</option>
+                      <option value={1440}>1 día</option>
+                    </select>
+                  </div>
+                )}
+
+                <label className="role-radio">
+                  <input type="checkbox" checked={noticeEmail} onChange={(e) => setNoticeEmail(e.target.checked)} />
+                  <span>También enviar por correo a todos los que tengan correo ({users.filter(u => u.email).length})</span>
+                </label>
+
+                <div className="form-group">
+                  <FieldLabel icon="admin_panel_settings">Tu contraseña de administrador</FieldLabel>
+                  <input
+                    type="password"
+                    className="form-input"
+                    placeholder="Necesaria para publicar o quitar un aviso"
+                    autoComplete="current-password"
+                    value={noticePass}
+                    onChange={(e) => setNoticePass(e.target.value)}
+                    required
+                  />
+                </div>
+
+                {noticeError && <p className="form-error" style={{ margin: 0, fontSize: '0.85rem' }}>{noticeError}</p>}
+
+                <div className="modal-footer">
+                  <button type="button" className="btn btn-secondary" onClick={() => setIsNoticeOpen(false)} style={{ width: 'auto' }}>
+                    Cerrar
+                  </button>
+                  <button type="submit" className="btn btn-primary" disabled={noticeBusy} style={{ width: 'auto' }}>
+                    <Icon name="campaign" size={18} /> Publicar aviso
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Role manager (only Inaki) */}
       {isRoleModalOpen && user && (

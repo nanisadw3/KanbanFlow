@@ -255,6 +255,23 @@ export function maintenanceMessage(message: string, o: MessageOptions = {}): Mai
   });
 }
 
+// A general announcement published by an administrator.
+export function announcementMessage(message: string, authorName: string, o: MessageOptions = {}): MailMessage {
+  return build({
+    subject: '📢 Aviso en KanbanFlow',
+    preheader: `${authorName} publicó un aviso para todos.`,
+    theme: BLUE,
+    emoji: '📢',
+    heading: 'Aviso para todos',
+    greeting: hello(o.name),
+    intro: `${authorName} publicó un aviso en KanbanFlow:`,
+    quote: message,
+    closing: 'Lo verás también como un banner arriba al entrar a KanbanFlow. ¡Gracias! 🙌',
+    footnote: 'No necesitas hacer nada.',
+    appUrl: o.appUrl,
+  });
+}
+
 export function overdueMessage(task: MailTask, o: MessageOptions = {}): MailMessage {
   const late = o.today ? daysBetween(task.endDate, o.today) : 0;
   const lateText = late === 1 ? 'venció ayer' : late > 1 ? `venció hace ${late} días` : 'ya venció';

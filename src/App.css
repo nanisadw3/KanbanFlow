@@ -3114,25 +3114,36 @@ body.dark-theme .prio-baja {
   white-space: nowrap;
 }
 
-/* Maintenance notice (started by Inaki): a calm, non-blocking banner at the top for everyone. */
-.maintenance-banner {
+/* Announcements: calm, non-blocking banners at the top for everyone. Maintenance is amber, normal is blue. */
+.notice-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+
+.notice-banner {
   display: flex;
   align-items: flex-start;
   gap: 0.75rem;
-  margin-bottom: 1rem;
   padding: 0.85rem 1.1rem;
   border-radius: 14px;
-  border: 1px solid rgba(var(--color-todo-rgb), 0.45);
-  background: rgba(var(--color-todo-rgb), 0.14);
+  border: 1px solid rgba(var(--notice-rgb), 0.45);
+  background: rgba(var(--notice-rgb), 0.14);
   color: var(--text-main);
 }
 
-.maintenance-banner > .material-symbols-rounded {
-  color: var(--color-todo);
+.notice-banner-maintenance { --notice: var(--color-todo); --notice-rgb: var(--color-todo-rgb); }
+.notice-banner-normal { --notice: var(--color-primary); --notice-rgb: var(--color-primary-rgb); }
+
+.notice-banner > .material-symbols-rounded {
+  color: var(--notice);
   margin-top: 0.1rem;
 }
 
-.maintenance-banner-text {
+.notice-banner-text {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
@@ -3140,12 +3151,18 @@ body.dark-theme .prio-baja {
   line-height: 1.45;
 }
 
-.maintenance-banner-text span {
+.notice-banner-text span {
   color: var(--text-muted);
   white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 
-.auth-wrapper > .maintenance-banner {
+.notice-banner-text small {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.auth-wrapper > .notice-stack {
   position: fixed;
   top: 1rem;
   left: 0;
@@ -3154,6 +3171,39 @@ body.dark-theme .prio-baja {
   margin: 0 auto;
   z-index: 5;
 }
+
+.notice-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.notice-list-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 12px;
+  background: rgba(var(--overlay-rgb), 0.06);
+}
+
+.notice-list-item > .material-symbols-rounded { flex: none; }
+.notice-list-maintenance > .material-symbols-rounded { color: var(--color-todo); }
+.notice-list-normal > .material-symbols-rounded { color: var(--color-primary); }
+
+.notice-list-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.notice-list-text small { color: var(--text-muted); font-size: 0.75rem; }
 
 .modal-footer .btn { white-space: nowrap; }
 

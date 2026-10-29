@@ -112,9 +112,16 @@ export const subscribePresence = createCachedSubscription<PresenceEntry[]>('pres
 export const subscribeComments = createCachedSubscription<TaskComment[]>('comments:all');
 export const subscribeCommentReads = createCachedSubscription<CommentRead[]>('commentReads:all');
 
-// "New feature coming, the site will be in maintenance" notice (null = none). Started/ended only by Inaki.
-export interface MaintenanceNotice { message: string; startedAt: string; by: string }
-export const subscribeMaintenance = createCachedSubscription<MaintenanceNotice | null>('maintenance:all');
+// Announcements shown as a banner: 'normal' ones (any admin, they expire) and the 'maintenance' one (Inaki only).
+export interface Notice {
+  id: string;
+  kind: 'normal' | 'maintenance';
+  message: string;
+  createdAt: string;
+  expiresAt: string | null;
+  createdBy: string;
+}
+export const subscribeNotices = createCachedSubscription<Notice[]>('notices:all');
 
 export const PRESENCE_STALE_MS = 20_000;
 export const isPresenceFresh = (entry: PresenceEntry, now = Date.now()) =>
@@ -228,11 +235,15 @@ export const setUserRole = (payload: {
   adminUsername: string; adminPassword: string; username: string; role: 'admin' | 'user'; password?: string;
 }): Promise<AuthResult> => emitWithAck('user:setRole', payload);
 
-// Starts or ends the maintenance notice. Needs the admin's username + password and the server only
-// accepts it from the role manager. `sendEmail` also mails everyone who has an address.
-export const setMaintenance = (payload: {
-  adminUsername: string; adminPassword: string; action: 'start' | 'end'; message?: string; sendEmail?: boolean;
-}): Promise<AuthResult & { emailed?: number; emailSkipped?: string }> => emitWithAck('maintenance:set', payload);
+// Publishing or ending an announcement needs the admin's username + password. The server only lets
+// the role manager publish/end the 'maintenance' kind. `minutes` is how long a normal one stays up.
+// `sendEmail` also mails everyone who has an address.
+export const publishNotice = (payload: {
+  adminUsername: string; adminPassword: string; kind: Notice['kind']; message?: string; minutes?: number; sendEmail?: boolean;
+}): Promise<AuthResult & { emailed?: number; emailSkipped?: string }> => emitWithAck('notice:publish', payload);
+
+export const endNotice = (payload: { adminUsername: string; adminPassword: string; id: string }): Promise<AuthResult> =>
+  emitWithAck('notice:end', payload);
 
 // Creating a user needs an admin's username + password; the server verifies them.
 export const createUserByAdmin = (payload: {
