@@ -392,6 +392,7 @@ export function MiniTaskCard({
         <div className="admin-mini-card-title">{act.title}</div>
         <div className="mini-card-flags">
           {status === 'doing' && act.kind !== 'shared' && <Meta icon="donut_small" tip="Avance">{act.progress ?? 50}%</Meta>}
+          {act.archived && <span className="meta" data-tip="Archivada" role="img" aria-label="Archivada"><Icon name="inventory_2" size={14} /></span>}
           <KindBadge act={act} sharedStats={sharedStats} />
           <PriorityFlag priority={act.priority} />
         </div>

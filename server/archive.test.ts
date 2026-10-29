@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 // Same convention as dates.test.ts: src/ has no Node types, so the test lives here.
-import { isLive, isDoneVisibleOnBoard, inArchivero, matchesTab, archiveTabCounts } from '../src/archive.ts';
+import { isLive, isDoneVisibleOnBoard, inArchivero, matchesTab, archiveTabCounts, matchesArchiveView, archiveViewCounts } from '../src/archive.ts';
 
 const DAY = 24 * 60 * 60 * 1000;
 const now = Date.parse('2026-10-16T12:00:00Z');
@@ -43,4 +43,15 @@ test('matchesTab y archiveTabCounts', () => {
   assert.equal(matchesTab(list[2], 'archived'), true);
   assert.equal(matchesTab(list[2], 'done'), false);
   assert.equal(matchesTab(list[0], 'all'), true);
+});
+
+test('matchesArchiveView: todas, no archivadas y archivadas', () => {
+  const list = [
+    { status: 'todo' }, { status: 'doing', archived: false }, { status: 'done', archived: true },
+    { status: 'todo', archived: true }, { status: 'cancelled', archived: true },
+  ];
+  assert.equal(list.filter(a => matchesArchiveView(a, 'all')).length, 5);
+  assert.deepEqual(list.filter(a => matchesArchiveView(a, 'active')).map(a => a.status), ['todo', 'doing']);
+  assert.deepEqual(list.filter(a => matchesArchiveView(a, 'archived')).map(a => a.status), ['done', 'todo', 'cancelled']);
+  assert.deepEqual(archiveViewCounts(list), { all: 5, active: 2, archived: 3 });
 });

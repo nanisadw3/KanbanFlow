@@ -607,6 +607,23 @@ body.dark-theme .btn-primary {
   gap: 1.5rem;
 }
 
+.admin-view-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.admin-view-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
 .admin-stats-grid {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
@@ -3092,3 +3109,7 @@ body.dark-theme .prio-baja {
 /* What would change when the participants of a shared task are edited */
 .participant-diff-add { color: var(--color-done); font-weight: 600; }
 .participant-diff-remove { color: var(--color-danger); font-weight: 600; }
+
+.admin-view-bar .segmented-option {
+  white-space: nowrap;
+}

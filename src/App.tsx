@@ -8,6 +8,7 @@ import {
   subscribeCommentReads,
   markCommentsRead,
   setSharedParticipants,
+  changeTaskKind,
   loginUser,
   loginAdmin,
   changeAdminPassword,
@@ -40,8 +41,8 @@ import type { Activity, User, Team, PresenceEntry, TaskComment, CommentRead } fr
 // Using Material Symbols Rounded via Google Fonts, no Lucide React imports needed
 import './App.css';
 import { todayString, isOverdue as isOverdueOn, daysOverdue, formatShortDate } from './dates';
-import { isLive, isDoneVisibleOnBoard as isDoneOnBoard, inArchivero, matchesTab, archiveTabCounts } from './archive';
-import type { ArchiveTab } from './archive';
+import { isLive, isDoneVisibleOnBoard as isDoneOnBoard, inArchivero, matchesTab, archiveTabCounts, matchesArchiveView, archiveViewCounts } from './archive';
+import type { ArchiveTab, ArchiveView } from './archive';
 import { buildLoginSummary, type LoginSummary } from './summary';
 import { Icon, IconButton, Avatar, Meta, PriorityFlag, MiniTaskCard, TaskCardBody, TaskDates, FieldLabel, Segmented, Toast } from './ui';
 import { REPEAT_OPTIONS, WEEKDAYS, MONTH_NAMES, usesWeekday, dayFor, describeRepeat, kindClass, sharedGroup, sharedProgress, copyProgress, unreadComments } from './taskKinds';
@@ -102,6 +103,7 @@ function App() {
   const ownTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [targetAssignee, setTargetAssignee] = useState<string>('');  // Admin filter
   const [viewingUserAsAdmin, setViewingUserAsAdmin] = useState<User | null>(null);
+  const [archiveView, setArchiveView] = useState<ArchiveView>('active'); // admin: all / not archived / archived
   const [overdueOnly, setOverdueOnly] = useState(false); // admin: also require "overdue"
   const [teamsExpanded, setTeamsExpanded] = useState(false); // Equipos panel: minimized by default, "Todos" expands it
   const [activeStatusFilters, setActiveStatusFilters] = useState<Set<'todo' | 'doing' | 'done' | 'cancelled'>>(new Set());
@@ -979,7 +981,7 @@ function App() {
 
     // Editing a shared task can also change who is on it. Taking someone off deletes their copy and
     // progress, so that asks for confirmation first.
-    const editingShared = modalMode === 'edit' && selectedActivity?.kind === 'shared' && !!selectedActivity.sharedId;
+    const editingShared = modalMode === 'edit' && selectedActivity?.kind === 'shared' && taskType === 'shared' && !!selectedActivity.sharedId;
     const people = editingShared ? participantDiff() : { added: [], removed: [] };
     if (editingShared) {
       if (sharedWith.size === 0) {
@@ -994,6 +996,41 @@ function App() {
         );
         return;
       }
+    }
+
+    // Leaving "shared" drops everyone else's copy and the comments, so that asks first.
+    const leavingShared = modalMode === 'edit' && selectedActivity?.kind === 'shared' && taskType !== 'shared';
+    if (leavingShared && othersOnShared.length > 0 && !confirmedRemoval) {
+      showConfirm(
+        'Cambiar el tipo de tarea',
+        `Esta tarea dejará de ser compartida: se quitará a ${othersOnShared.map(displayNameOf).join(', ')} (su copia y su avance se eliminan) y se borran los comentarios.`,
+        () => void handleSaveActivity(undefined, true)
+      );
+      return;
+    }
+    if (kindChanged && selectedActivity) {
+      if (taskType === 'shared' && sharedWith.size === 0) {
+        setModalError('Elige al menos una persona para compartir la tarea.');
+        return;
+      }
+      const res = await changeTaskKind({
+        id: selectedActivity.id, to: taskType, by: user.username,
+        usernames: taskType === 'shared' ? [...sharedWith] : undefined,
+        repeat: taskType === 'recurring' ? repeat : undefined,
+        repeatDay: taskType === 'recurring' ? repeatDay : undefined,
+        repeatMonth: taskType === 'recurring' && repeat === 'yearly' ? repeatMonth : undefined,
+        fields: { title, description, startDate, endDate: taskType === 'recurring' ? '' : endDate, priority },
+      });
+      if (!res.ok) {
+        setModalError(
+          res.error === 'timeout' ? 'No se pudo conectar con el servidor.'
+          : res.error === 'forbidden' ? 'Solo quienes participan (o un administrador) pueden cambiar el tipo de esta tarea.'
+          : res.error === 'invalid_dates' ? 'Revisa las fechas de inicio y fin.'
+          : 'No se pudo cambiar el tipo de la tarea.'
+        );
+        return;
+      }
+      showToast(`La tarea ahora es ${taskType === 'shared' ? 'compartida' : taskType === 'recurring' ? 'repetitiva' : 'individual'}.`, true);
     }
 
     if (modalMode === 'create' && taskType === 'shared') {
@@ -1037,7 +1074,7 @@ function App() {
         title,
         description,
         startDate,
-        endDate,
+        endDate: taskType === 'recurring' ? '' : endDate,
         status,
         priority,
         progress: calculatedProgress,
@@ -1274,7 +1311,7 @@ function App() {
     if (!matchesUserFilter) return false;
 
     if (activeStatusFilters.size > 0 || overdueOnly) {
-      const userActs = activities.filter(a => a.username.toLowerCase() === username.toLowerCase() && !a.teamId && isLive(a));
+      const userActs = activities.filter(a => a.username.toLowerCase() === username.toLowerCase() && !a.teamId && matchesArchiveView(a, archiveView));
       const hasMatchingActivity = userActs.some(a =>
         (activeStatusFilters.size === 0 || activeStatusFilters.has(a.status)) && (!overdueOnly || isOverdue(a))
       );
@@ -1299,7 +1336,41 @@ function App() {
       removed: currentParticipants.filter(c => !selected.some(u => u.toLowerCase() === c.toLowerCase())),
     };
   };
+  // Editing: the type can be changed (the user picked the wrong one). `editingSharedNow` = the task is
+  // shared now AND stays shared; converting an individual/repeating task to shared starts a fresh picker.
+  const originalKind = selectedActivity?.kind ?? 'single';
+  const kindChanged = modalMode === 'edit' && !!selectedActivity && taskType !== originalKind;
+  const editingSharedNow = modalMode === 'edit' && originalKind === 'shared' && taskType === 'shared';
+  const choosingRule = modalMode === 'create' || originalKind !== 'recurring' || kindChanged;
+  const othersOnShared = originalKind === 'shared'
+    ? currentParticipants.filter(c => c.toLowerCase() !== (selectedActivity?.username ?? '').toLowerCase())
+    : [];
+  const kindChangeHint = !kindChanged ? '' : originalKind === 'shared'
+    ? (othersOnShared.length > 0
+        ? `Al guardar se quitará a ${othersOnShared.map(displayNameOf).join(', ')} de la tarea (su copia, su avance y los comentarios se eliminan).`
+        : 'Al guardar la tarea deja de ser compartida y se eliminan sus comentarios.')
+    : originalKind === 'recurring'
+      ? 'Al guardar deja de repetirse; las ya generadas se quedan como tareas normales.'
+      : taskType === 'shared'
+        ? 'Al guardar se agrega a las personas elegidas (reciben la tarea en su tablero y un correo). Tu avance actual se conserva.'
+        : 'Al guardar la tarea se repetirá según lo que elijas; ya no tendrá fecha de fin.';
+  const changeTaskType = (v: TaskKind) => {
+    setTaskType(v);
+    setModalError('');
+    if (modalMode !== 'edit' || !selectedActivity) return;
+    if (v === 'shared') {
+      setSharedWith(new Set(originalKind === 'shared' ? currentParticipants : [selectedActivity.username]));
+    }
+    // A repeating task has no dates; going back to one that does needs them filled in.
+    const today = new Date().toISOString().split('T')[0];
+    if (v !== 'recurring') {
+      if (!startDate) setStartDate(today);
+      if (!endDate) setEndDate(today);
+    }
+  };
   const toggleSharedWith = (username: string) => setSharedWith(prev => {
+    // Becoming shared keeps the task's current owner on it.
+    if (modalMode === 'edit' && originalKind !== 'shared' && username.toLowerCase() === selectedActivity?.username.toLowerCase()) return prev;
     const next = new Set(prev);
     if (next.has(username)) next.delete(username); else next.add(username);
     return next;
@@ -1512,6 +1583,23 @@ function App() {
       {/* Main Panel */}
       {isAdmin && !viewingUserAsAdmin && !viewingTeam ? (
         <div className="admin-dashboard animate-fade-in">
+          <div className="admin-view-bar">
+            <span className="admin-view-label"><Icon name="inventory_2" size={18} /> Ver</span>
+            <Segmented
+              ariaLabel="Qué tareas ver"
+              value={archiveView}
+              onChange={setArchiveView}
+              options={(() => {
+                const c = archiveViewCounts(activities.filter(a => !a.teamId));
+                return [
+                  { value: 'all' as const, label: 'Todas', icon: 'select_all', color: '--color-primary', count: c.all },
+                  { value: 'active' as const, label: 'No archivadas', icon: 'inbox', color: '--color-doing', count: c.active },
+                  { value: 'archived' as const, label: 'Archivadas', icon: 'inventory_2', color: '--color-secondary', count: c.archived },
+                ];
+              })()}
+            />
+          </div>
+
           {/* Admin Stats Grid */}
           <div className="admin-stats-grid">
             <button
@@ -1552,7 +1640,7 @@ function App() {
                   onClick={() => toggleStatusFilter(cfg.key)}
                   aria-pressed={isActive}
                   data-tip={`Filtrar por: ${cfg.full}`}
-                  aria-label={`Filtrar por: ${cfg.full}, ${activities.filter(a => a.status === cfg.key && !a.teamId && isLive(a)).length}`}
+                  aria-label={`Filtrar por: ${cfg.full}, ${activities.filter(a => a.status === cfg.key && !a.teamId && matchesArchiveView(a, archiveView)).length}`}
                 >
                   {isActive && (
                     <span className="stat-filter-check">
@@ -1563,7 +1651,7 @@ function App() {
                     <span className="material-symbols-rounded" style={{ fontSize: '26px' }}>{cfg.icon}</span>
                   </div>
                   <div className="stat-info">
-                    <span className="stat-value">{activities.filter(a => a.status === cfg.key && !a.teamId && isLive(a)).length}</span>
+                    <span className="stat-value">{activities.filter(a => a.status === cfg.key && !a.teamId && matchesArchiveView(a, archiveView)).length}</span>
                     <span className="stat-label">{cfg.label}</span>
                   </div>
                 </button>
@@ -1571,7 +1659,7 @@ function App() {
             })}
 
             {(() => {
-              const overdueCount = activities.filter(a => !a.teamId && isOverdue(a)).length;
+              const overdueCount = activities.filter(a => !a.teamId && matchesArchiveView(a, archiveView) && isOverdue(a)).length;
               return (
                 <button
                   type="button"
@@ -1674,7 +1762,7 @@ function App() {
           {/* Teams management. Can be minimized at any time, and collapses automatically while a filter is active. */}
           {(() => {
             const teamRows = teams.map(t => {
-              const summary = summarizeMatches(activities.filter(a => a.teamId === t.id && isLive(a)), taskFilter, today);
+              const summary = summarizeMatches(activities.filter(a => a.teamId === t.id && matchesArchiveView(a, archiveView)), taskFilter, today);
               return { team: t, summary, matches: summary.matching > 0 };
             });
             const matchingTeams = teamRows.filter(r => r.matches);
@@ -1751,7 +1839,7 @@ function App() {
             ) : (
               <div className="teams-grid">
                 {teamRows.map(({ team: t, summary, matches }) => {
-                  const teamTaskCount = activities.filter(a => a.teamId === t.id && isLive(a)).length;
+                  const teamTaskCount = activities.filter(a => a.teamId === t.id && matchesArchiveView(a, archiveView)).length;
                   return (
                     <div key={t.id} className={`team-card ${filterActive ? (matches ? 'is-match' : 'is-dimmed') : ''}`} onClick={() => handleSelectTeam(t)}>
                       <IconButton icon="delete" label="Eliminar equipo" variant="danger" size={30} className="team-card-delete" onClick={(e) => handleDeleteTeam(t.id, t.name, e)} />
@@ -1804,10 +1892,10 @@ function App() {
             {/* Detailed row-by-row view of user activities */}
             {users
               .filter(u => u.username.toLowerCase() !== 'admin' && isUserShown(u.username))
-              .map(u => ({ u, overdueTotal: activities.filter(a => a.username.toLowerCase() === u.username.toLowerCase() && !a.teamId && isOverdue(a)).length }))
+              .map(u => ({ u, overdueTotal: activities.filter(a => a.username.toLowerCase() === u.username.toLowerCase() && !a.teamId && matchesArchiveView(a, archiveView) && isOverdue(a)).length }))
               .sort((a, b) => b.overdueTotal - a.overdueTotal) // people with late tasks first (stable otherwise)
               .map(({ u, overdueTotal }) => {
-              const userActs = activities.filter(a => a.username.toLowerCase() === u.username.toLowerCase() && !a.teamId && isLive(a) && (!overdueOnly || isOverdue(a)));
+              const userActs = activities.filter(a => a.username.toLowerCase() === u.username.toLowerCase() && !a.teamId && matchesArchiveView(a, archiveView) && (!overdueOnly || isOverdue(a)));
               const userIsOnline = onlineNow.some(p => p.username.toLowerCase() === u.username.toLowerCase());
               const displayName = u.fullName || u.username;
               return (
@@ -2133,26 +2221,27 @@ function App() {
             </div>
 
             <form onSubmit={handleSaveActivity}>
-              {modalMode === 'create' && (
+              {(
                 <div className="form-group">
                   <FieldLabel icon="category">Tipo de tarea</FieldLabel>
                   <Segmented
                     ariaLabel="Tipo de tarea"
                     value={taskType}
-                    onChange={(v) => { setTaskType(v); setModalError(''); }}
+                    onChange={changeTaskType}
                     options={[
                       { value: 'single', label: 'Individual', icon: 'person', color: '--color-primary' },
                       { value: 'shared', label: 'Compartida', icon: 'groups', color: '--color-shared' },
                       { value: 'recurring', label: 'Repetitiva', icon: 'event_repeat', color: '--color-recurring' },
                     ]}
                   />
+                  {kindChangeHint && <p className="field-hint">{kindChangeHint}</p>}
                 </div>
               )}
 
-              {((modalMode === 'create' && taskType === 'shared') || (modalMode === 'edit' && selectedActivity?.kind === 'shared')) && (
+              {taskType === 'shared' && (
                 <div className="form-group">
                   <FieldLabel icon="groups">
-                    {modalMode === 'create' ? 'Compartir con' : 'Participantes'} ({sharedWith.size} {sharedWith.size === 1 ? 'persona' : 'personas'})
+                    {modalMode === 'create' || !editingSharedNow ? 'Compartir con' : 'Participantes'} ({sharedWith.size} {sharedWith.size === 1 ? 'persona' : 'personas'})
                   </FieldLabel>
                   <div className="users-panel-actions participant-actions">
                     <button type="button" onClick={() => setSharedWith(new Set(participantOptions))}>Todos</button>
@@ -2178,7 +2267,7 @@ function App() {
                       );
                     })}
                   </div>
-                  {modalMode === 'create' ? (
+                  {modalMode === 'create' || !editingSharedNow ? (
                     <p className="field-hint">Cada persona la verá en su tablero con su propio avance; el equipo ve el promedio.</p>
                   ) : (() => {
                     const { added, removed } = participantDiff();
@@ -2262,7 +2351,7 @@ function App() {
               {taskType === 'recurring' && (
                 <div className="form-group">
                   <FieldLabel icon="event_repeat">Se repite</FieldLabel>
-                  {modalMode === 'create' ? (
+                  {choosingRule ? (
                     <>
                       <select
                         className="form-input"
@@ -2305,7 +2394,7 @@ function App() {
                         </div>
                       )}
                       <p className="field-hint">
-                        La primera se crea ahora y las siguientes se generan solas{repeat === 'monthly' || repeat === 'quarterly' || repeat === 'semiannual' || repeat === 'yearly' ? '; si el mes no tiene ese día, se usa su último día' : ''}. No lleva fecha de inicio ni de fin.
+                        {modalMode === 'create' ? 'La primera se crea ahora y las siguientes' : 'Esta tarea sigue como la actual y las siguientes'} se generan solas{repeat === 'monthly' || repeat === 'quarterly' || repeat === 'semiannual' || repeat === 'yearly' ? '; si el mes no tiene ese día, se usa su último día' : ''}. No lleva fecha de inicio ni de fin.
                       </p>
                     </>
                   ) : (
@@ -2327,7 +2416,7 @@ function App() {
                     { value: 'done', label: 'Hecho', icon: 'check_circle', color: '--color-done' },
                   ]}
                 />
-                {modalMode === 'edit' && taskType === 'shared' && selectedActivity && (
+                {editingSharedNow && selectedActivity && (
                   <p className="field-hint">Este es el avance de {selectedActivity.username}; cada persona lleva el suyo.</p>
                 )}
               </div>
@@ -2382,7 +2471,7 @@ function App() {
                 />
               </div>
 
-              {modalMode === 'edit' && selectedActivity?.kind === 'shared' && renderSharedPanel(selectedActivity)}
+              {editingSharedNow && selectedActivity && renderSharedPanel(selectedActivity)}
 
               {modalError && <p className="form-error">{modalError}</p>}
 

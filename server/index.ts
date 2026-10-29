@@ -16,6 +16,7 @@ import { changeUserRole } from './roles.ts';
 import { updateProfile, parsePhoto } from './profile.ts';
 import { createOverdueChecker, localToday, msUntilNextLocalMidnight } from './overdue.ts';
 import { isRepeat, normalizeRule, ensureRecurrenceTable, createSeries, stopSeries, dropSeriesWhere, runRecurrences } from './recurrence.ts';
+import { changeKind, type KindChangeInput } from './kindChange.ts';
 import {
   validateShared, createSharedTask, syncSharedFields, ensureCommentsTable, ensureCommentReadsTable, pruneComments, addComment, sharedRecipients,
   markCommentsRead, commentRecipients, setParticipants,
@@ -523,6 +524,23 @@ io.on('connection', async (socket) => {
     await broadcastActivities();
     await cleanupAfterDelete();
     if (result.added.length > 0) {
+      void notifySharedTask(result.task, result.by, result.all, result.added).catch(err => console.error('[Mailer] notifySharedTask falló:', err));
+    }
+    void checkOverdue();
+    reply({ ok: true });
+  });
+
+  // The type picked at creation was wrong: turn the task into another type without re-creating it.
+  socket.on('activity:changeKind', async (
+    payload: KindChangeInput,
+    ack?: (res: { ok: boolean; error?: string }) => void
+  ) => {
+    const reply = ack ?? (() => {});
+    const result = await changeKind(db, payload ?? {}, localToday());
+    if (!result.ok) return reply(result);
+    await broadcastActivities();
+    await cleanupAfterDelete();
+    if (result.to === 'shared') {
       void notifySharedTask(result.task, result.by, result.all, result.added).catch(err => console.error('[Mailer] notifySharedTask falló:', err));
     }
     void checkOverdue();

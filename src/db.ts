@@ -149,6 +149,21 @@ export const markCommentsRead = async (username: string, sharedId: string): Prom
 export const setSharedParticipants = (sharedId: string, usernames: string[], by: string): Promise<AuthResult> =>
   emitWithAck('shared:setParticipants', { sharedId, usernames, by });
 
+// Turns a task into another type (individual / shared / repeating) without re-creating it. Leaving
+// "shared" deletes the other people's copies; leaving "repeating" stops the series.
+export interface ChangeKindInput {
+  id: string;
+  to: NonNullable<Activity['kind']>;
+  by: string;
+  usernames?: string[];
+  repeat?: Activity['repeat'];
+  repeatDay?: number;
+  repeatMonth?: number;
+  fields: { title: string; description: string; startDate: string; endDate: string; priority: Activity['priority'] };
+}
+export const changeTaskKind = (payload: ChangeKindInput): Promise<AuthResult> =>
+  emitWithAck('activity:changeKind', payload);
+
 // Stops a repeating task from generating more occurrences (the existing ones stay as normal tasks).
 export const stopSeries = async (activityId: string): Promise<void> => {
   socket.emit('series:stop', activityId);

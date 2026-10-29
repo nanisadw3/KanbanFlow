@@ -40,3 +40,15 @@ export const archiveTabCounts = (list: ArchivableTask[]): Record<ArchiveTab, num
   cancelled: list.filter(a => matchesTab(a, 'cancelled')).length,
   archived: list.filter(a => matchesTab(a, 'archived')).length,
 });
+
+// The admin dashboard's "Ver" switch: every task, only the ones not archived, or only the archived ones.
+export type ArchiveView = 'all' | 'active' | 'archived';
+
+export const matchesArchiveView = (a: ArchivableTask, view: ArchiveView): boolean =>
+  view === 'all' ? true : view === 'archived' ? !!a.archived : !a.archived;
+
+export const archiveViewCounts = (list: ArchivableTask[]): Record<ArchiveView, number> => ({
+  all: list.length,
+  active: list.filter(a => matchesArchiveView(a, 'active')).length,
+  archived: list.filter(a => matchesArchiveView(a, 'archived')).length,
+});
