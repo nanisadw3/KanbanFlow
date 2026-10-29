@@ -62,6 +62,7 @@ const BLUE: Theme = { header: '#4f46e5', headerText: '#e0e7ff', soft: '#eef2ff',
 const RED: Theme = { header: '#dc2626', headerText: '#fee2e2', soft: '#fef2f2', accent: '#dc2626' };
 const GREEN: Theme = { header: '#059669', headerText: '#d1fae5', soft: '#ecfdf5', accent: '#059669' };
 
+const AMBER: Theme = { header: '#b45309', headerText: '#fef3c7', soft: '#fffbeb', accent: '#b45309' };
 const PURPLE: Theme = { header: '#6d43c7', headerText: '#ede9fe', soft: '#f5f3ff', accent: '#6d43c7' };
 
 interface Layout {
@@ -76,6 +77,7 @@ interface Layout {
   highlight?: string; // the date/countdown line, with its own emoji
   quote?: string;     // a comment shown as a quote under the intro (user text: escaped like everything else)
   closing: string;
+  footnote?: string;  // replaces the default "already did this task" footer
   appUrl?: string;
 }
 
@@ -126,7 +128,7 @@ function renderHtml(l: Layout): string {
   ${highlight}
   <tr><td style="padding:22px 32px 0 32px;"><div style="font-size:17px;line-height:1.65;color:#334155;">${esc(l.closing)}</div></td></tr>
   ${button}
-  <tr><td style="padding:32px;"><div style="border-top:1px solid #e2e8f0;padding-top:18px;font-size:13px;line-height:1.6;color:#94a3b8;text-align:center;">Este es un aviso automático de KanbanFlow 🤖<br>Si ya atendiste esta tarea, puedes ignorar este mensaje.</div></td></tr>
+  <tr><td style="padding:32px;"><div style="border-top:1px solid #e2e8f0;padding-top:18px;font-size:13px;line-height:1.6;color:#94a3b8;text-align:center;">Este es un aviso automático de KanbanFlow 🤖<br>${esc(l.footnote ?? 'Si ya atendiste esta tarea, puedes ignorar este mensaje.')}</div></td></tr>
 </table>
 </td></tr></table>
 </body></html>`;
@@ -232,6 +234,23 @@ export function commentMessage(task: MailTask, authorName: string, text: string,
     intro: `${authorName} comentó en la tarea compartida "${task.title}":`,
     quote: excerpt,
     closing: 'Entra a KanbanFlow para leer la conversación y responder. Si llegan más comentarios, los verás marcados en la tarea (no te enviaremos otro correo hasta que leas este). 💜',
+    appUrl: o.appUrl,
+  });
+}
+
+// Sent by the role manager to everyone with an email when a new feature is about to be released.
+export function maintenanceMessage(message: string, o: MessageOptions = {}): MailMessage {
+  return build({
+    subject: '🛠️ KanbanFlow estará en mantenimiento',
+    preheader: 'Vamos a agregar una nueva funcionalidad; la página puede no estar disponible unos minutos.',
+    theme: AMBER,
+    emoji: '🛠️',
+    heading: 'Mantenimiento de KanbanFlow',
+    greeting: hello(o.name),
+    intro: 'Vamos a agregar una nueva funcionalidad y la página se encontrará en mantenimiento.',
+    quote: message,
+    closing: 'Si ves algo raro o no carga unos minutos, es normal. Cuando termine, todo seguirá como lo dejaste. ¡Gracias por la paciencia! 🙏',
+    footnote: 'No necesitas hacer nada.',
     appUrl: o.appUrl,
   });
 }

@@ -138,4 +138,4 @@ export function mailerFromConfig(cfg: MailConfig, fetchFn?: typeof fetch): Maile
   return createMailer(createGmailTransport({ clientId, clientSecret, refreshToken }, fetchFn), cfg.from ?? '');
 }
 
-export { newTaskMessage, sharedTaskMessage, commentMessage, overdueMessage, testMessage } from './emailTemplates.ts';
+export { newTaskMessage, sharedTaskMessage, commentMessage, maintenanceMessage, overdueMessage, testMessage } from './emailTemplates.ts';

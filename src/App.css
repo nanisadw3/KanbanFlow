@@ -3113,3 +3113,51 @@ body.dark-theme .prio-baja {
 .admin-view-bar .segmented-option {
   white-space: nowrap;
 }
+
+/* Maintenance notice (started by Inaki): a calm, non-blocking banner at the top for everyone. */
+.maintenance-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  padding: 0.85rem 1.1rem;
+  border-radius: 14px;
+  border: 1px solid rgba(var(--color-todo-rgb), 0.45);
+  background: rgba(var(--color-todo-rgb), 0.14);
+  color: var(--text-main);
+}
+
+.maintenance-banner > .material-symbols-rounded {
+  color: var(--color-todo);
+  margin-top: 0.1rem;
+}
+
+.maintenance-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.maintenance-banner-text span {
+  color: var(--text-muted);
+  white-space: pre-line;
+}
+
+.auth-wrapper > .maintenance-banner {
+  position: fixed;
+  top: 1rem;
+  left: 0;
+  right: 0;
+  width: min(560px, calc(100% - 2rem));
+  margin: 0 auto;
+  z-index: 5;
+}
+
+.modal-footer .btn { white-space: nowrap; }
+
+/* The admin dashboard has a lot to show side by side, so it gets a wider page than a board. */
+.app-container-wide {
+  max-width: 1800px;
+}

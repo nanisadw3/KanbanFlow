@@ -112,6 +112,10 @@ export const subscribePresence = createCachedSubscription<PresenceEntry[]>('pres
 export const subscribeComments = createCachedSubscription<TaskComment[]>('comments:all');
 export const subscribeCommentReads = createCachedSubscription<CommentRead[]>('commentReads:all');
 
+// "New feature coming, the site will be in maintenance" notice (null = none). Started/ended only by Inaki.
+export interface MaintenanceNotice { message: string; startedAt: string; by: string }
+export const subscribeMaintenance = createCachedSubscription<MaintenanceNotice | null>('maintenance:all');
+
 export const PRESENCE_STALE_MS = 20_000;
 export const isPresenceFresh = (entry: PresenceEntry, now = Date.now()) =>
   now - entry.lastSeen < PRESENCE_STALE_MS;
@@ -223,6 +227,12 @@ export const changeAdminPassword = (username: string, currentPassword: string, n
 export const setUserRole = (payload: {
   adminUsername: string; adminPassword: string; username: string; role: 'admin' | 'user'; password?: string;
 }): Promise<AuthResult> => emitWithAck('user:setRole', payload);
+
+// Starts or ends the maintenance notice. Needs the admin's username + password and the server only
+// accepts it from the role manager. `sendEmail` also mails everyone who has an address.
+export const setMaintenance = (payload: {
+  adminUsername: string; adminPassword: string; action: 'start' | 'end'; message?: string; sendEmail?: boolean;
+}): Promise<AuthResult & { emailed?: number; emailSkipped?: string }> => emitWithAck('maintenance:set', payload);
 
 // Creating a user needs an admin's username + password; the server verifies them.
 export const createUserByAdmin = (payload: {

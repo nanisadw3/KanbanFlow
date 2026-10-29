@@ -6,6 +6,8 @@ import {
   subscribePresence,
   subscribeComments,
   subscribeCommentReads,
+  subscribeMaintenance,
+  setMaintenance,
   markCommentsRead,
   setSharedParticipants,
   changeTaskKind,
@@ -37,7 +39,7 @@ import {
   updateProfile,
   avatarUrl,
 } from './db';
-import type { Activity, User, Team, PresenceEntry, TaskComment, CommentRead } from './db';
+import type { Activity, User, Team, PresenceEntry, TaskComment, CommentRead, MaintenanceNotice } from './db';
 // Using Material Symbols Rounded via Google Fonts, no Lucide React imports needed
 import './App.css';
 import { todayString, isOverdue as isOverdueOn, daysOverdue, formatShortDate } from './dates';
@@ -127,6 +129,14 @@ function App() {
   // Shown right after logging in: tasks assigned since the previous login + overdue ones.
   const [loginSummary, setLoginSummary] = useState<{ name: string; summary: LoginSummary } | null>(null);
   // Role manager modal (only the user "Inaki" gets the button; the server enforces it too).
+  // Maintenance notice (everyone sees the banner; only Inaki gets the button, and the server enforces it).
+  const [maintenance, setMaintenanceNotice] = useState<MaintenanceNotice | null>(null);
+  const [isMaintOpen, setIsMaintOpen] = useState(false);
+  const [maintMessage, setMaintMessage] = useState('');
+  const [maintEmail, setMaintEmail] = useState(false);
+  const [maintPass, setMaintPass] = useState('');
+  const [maintBusy, setMaintBusy] = useState(false);
+  const [maintError, setMaintError] = useState('');
   const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
   const [roleTarget, setRoleTarget] = useState('');
   const [roleChoice, setRoleChoice] = useState<'admin' | 'user'>('user');
@@ -292,6 +302,7 @@ function App() {
     const unsubPresence = subscribePresence(setPresence);
     const unsubComments = subscribeComments(setComments);
     const unsubCommentReads = subscribeCommentReads(setCommentReads);
+    const unsubMaintenance = subscribeMaintenance(setMaintenanceNotice);
     return () => {
       unsubActivities();
       unsubUsers();
@@ -299,6 +310,7 @@ function App() {
       unsubPresence();
       unsubComments();
       unsubCommentReads();
+      unsubMaintenance();
     };
   }, []);
 
@@ -452,6 +464,43 @@ function App() {
     const loggedIn = await loginUser(existingUser.username, existingUser.fullName, existingUser.role);
     setUser(loggedIn);
     showLoginSummary(loggedIn, existingUser.lastLogin);
+  };
+
+  const openMaintModal = () => {
+    setMaintMessage('');
+    setMaintEmail(false);
+    setMaintPass('');
+    setMaintError('');
+    setIsMaintOpen(true);
+  };
+
+  const handleMaintenance = async (action: 'start' | 'end') => {
+    if (!user) return;
+    setMaintBusy(true);
+    setMaintError('');
+    const res = await setMaintenance({
+      adminUsername: user.username, adminPassword: maintPass, action,
+      message: action === 'start' ? maintMessage : undefined, sendEmail: action === 'start' && maintEmail,
+    });
+    setMaintBusy(false);
+    if (!res.ok) {
+      const messages: Record<string, string> = {
+        bad_password: 'Tu contraseña de administrador es incorrecta.',
+        forbidden: 'Solo el administrador principal puede publicar este aviso.',
+        too_long: 'El mensaje es demasiado largo (máximo 500 caracteres).',
+        timeout: 'No se pudo conectar con el servidor.',
+      };
+      setMaintError(messages[res.error ?? ''] ?? 'No se pudo publicar el aviso.');
+      return;
+    }
+    if (action === 'end') {
+      showToast('El aviso de mantenimiento terminó.', true);
+    } else if (maintEmail && res.emailSkipped) {
+      showToast('Aviso publicado, pero el correo no está configurado: no se envió ningún correo.', false);
+    } else {
+      showToast(maintEmail && res.emailed ? `Aviso publicado y enviado por correo a ${res.emailed} ${res.emailed === 1 ? 'persona' : 'personas'}.` : 'Aviso publicado para todos.', true);
+    }
+    setIsMaintOpen(false);
   };
 
   const openRoleModal = () => {
@@ -1457,9 +1506,20 @@ function App() {
     );
   };
 
+  const maintenanceBanner = maintenance && (
+    <div className="maintenance-banner animate-fade-in" role="status">
+      <Icon name="construction" size={22} />
+      <div className="maintenance-banner-text">
+        <strong>KanbanFlow está en mantenimiento</strong>
+        <span>{maintenance.message}</span>
+      </div>
+    </div>
+  );
+
   if (!user) {
     return (
       <div className="auth-wrapper">
+        {maintenanceBanner}
         <div className="glass-panel auth-card animate-fade-in">
           <h1 className="auth-logo">Kanban<span className="auth-logo-accent">Flow</span></h1>
           <p className="auth-subtitle">Gestiona tus tareas</p>
@@ -1517,7 +1577,8 @@ function App() {
   }
 
   return (
-    <div className="app-container">
+    <div className={`app-container ${isAdmin && !viewingUserAsAdmin && !viewingTeam ? 'app-container-wide' : ''}`}>
+      {maintenanceBanner}
       {/* Top Navbar */}
       <div className="glass-panel board-header animate-fade-in">
         <div className="user-badge">
@@ -1558,6 +1619,9 @@ function App() {
               <IconButton icon="person_add" label="Nuevo usuario" onClick={openCreateUserModal} />
               {user.username.toLowerCase() === 'inaki' && (
                 <IconButton icon="manage_accounts" label="Cambiar rol de usuario" onClick={openRoleModal} />
+              )}
+              {user.username.toLowerCase() === 'inaki' && (
+                <IconButton icon="campaign" label={maintenance ? 'Aviso de mantenimiento (activo)' : 'Avisar de mantenimiento'} variant={maintenance ? 'danger' : 'ghost'} onClick={openMaintModal} />
               )}
               <IconButton icon="download" label="Exportar a Excel" onClick={() => setIsExportOpen(true)} />
             </>
@@ -2948,6 +3012,86 @@ function App() {
                 <Icon name="check" size={18} /> Entendido
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Maintenance notice (only Inaki) */}
+      {isMaintOpen && user && (
+        <div className="modal-overlay" onClick={() => setIsMaintOpen(false)}>
+          <div className="glass-panel modal-content animate-scale-in" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '540px' }}>
+            <div className="modal-header">
+              <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Icon name="campaign" style={{ color: 'var(--color-primary)' }} />
+                Aviso de mantenimiento
+              </h3>
+              <button type="button" className="modal-close" onClick={() => setIsMaintOpen(false)} aria-label="Cerrar">
+                <Icon name="close" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => { e.preventDefault(); void handleMaintenance('start'); }}
+              style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}
+            >
+              {maintenance && (
+                <p className="field-hint field-hint-strong">
+                  Ya hay un aviso activo, publicado el {new Date(maintenance.startedAt).toLocaleString()} — si publicas otro, lo reemplaza.
+                </p>
+              )}
+              <div className="form-group">
+                <FieldLabel icon="chat">Mensaje (opcional)</FieldLabel>
+                <textarea
+                  className="form-input"
+                  rows={4}
+                  maxLength={500}
+                  placeholder="Vamos a agregar una nueva funcionalidad. KanbanFlow estará en mantenimiento por un momento y puede que no esté disponible unos minutos."
+                  value={maintMessage}
+                  onChange={(e) => setMaintMessage(e.target.value)}
+                />
+                <p className="field-hint">Todos los que tengan abierta la página lo ven al instante en un banner; quien entre después también.</p>
+              </div>
+
+              <label className="role-radio">
+                <input type="checkbox" checked={maintEmail} onChange={(e) => setMaintEmail(e.target.checked)} />
+                <span>También enviar por correo a todos los que tengan correo ({users.filter(u => u.email).length})</span>
+              </label>
+
+              <div className="form-group">
+                <FieldLabel icon="admin_panel_settings">Tu contraseña de administrador</FieldLabel>
+                <input
+                  type="password"
+                  className="form-input"
+                  placeholder="Necesaria para confirmar"
+                  autoComplete="current-password"
+                  value={maintPass}
+                  onChange={(e) => setMaintPass(e.target.value)}
+                  required
+                />
+              </div>
+
+              {maintError && <p className="form-error" style={{ margin: 0, fontSize: '0.85rem' }}>{maintError}</p>}
+
+              <div className="modal-footer">
+                {maintenance && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary push-left"
+                    disabled={maintBusy || !maintPass}
+                    onClick={() => void handleMaintenance('end')}
+                    style={{ width: 'auto' }}
+                  >
+                    <Icon name="check_circle" size={18} /> Terminar aviso
+                  </button>
+                )}
+                <button type="button" className="btn btn-secondary" onClick={() => setIsMaintOpen(false)} style={{ width: 'auto' }}>
+                  Cancelar
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={maintBusy} style={{ width: 'auto' }}>
+                  <Icon name="campaign" size={18} /> Avisar a todos
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

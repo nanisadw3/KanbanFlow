@@ -8,7 +8,7 @@ import path from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { scrypt as scryptCb, randomBytes, timingSafeEqual } from 'crypto';
 import { normalizeEmail } from './email.ts';
-import { createMailer, mailerFromConfig, newTaskMessage, sharedTaskMessage, commentMessage, testMessage, type Mailer } from './mailer.ts';
+import { createMailer, mailerFromConfig, newTaskMessage, sharedTaskMessage, commentMessage, maintenanceMessage, testMessage, type Mailer } from './mailer.ts';
 import { ensureSettingsTable, getSetting, setSetting, resolveMailConfig, saveMailConfig, publicMailSettings } from './settings.ts';
 import { autoCompleteAtFull } from './autocomplete.ts';
 import { validateNewUser, createUser, touchLogin } from './users.ts';
@@ -17,6 +17,7 @@ import { updateProfile, parsePhoto } from './profile.ts';
 import { createOverdueChecker, localToday, msUntilNextLocalMidnight } from './overdue.ts';
 import { isRepeat, normalizeRule, ensureRecurrenceTable, createSeries, stopSeries, dropSeriesWhere, runRecurrences } from './recurrence.ts';
 import { changeKind, type KindChangeInput } from './kindChange.ts';
+import { getNotice, startNotice, endNotice } from './maintenance.ts';
 import {
   validateShared, createSharedTask, syncSharedFields, ensureCommentsTable, ensureCommentReadsTable, pruneComments, addComment, sharedRecipients,
   markCommentsRead, commentRecipients, setParticipants,
@@ -430,6 +431,7 @@ io.on('connection', async (socket) => {
   socket.emit('presence:all', await getPresence());
   socket.emit('comments:all', await getComments());
   socket.emit('commentReads:all', await getCommentReads());
+  socket.emit('maintenance:all', await getNotice(db));
 
   // Activity handlers
   socket.on('activity:add', async (activityData: Omit<Activity, 'id' | 'createdAt'>) => {
@@ -860,6 +862,43 @@ io.on('connection', async (socket) => {
     );
     if (result.ok) await broadcastUsers();
     reply(result);
+  });
+
+  // "We're adding a feature, the site will be in maintenance" notice: only the role manager (Inaki)
+  // may start or end it, proving an admin password like the other sensitive actions. It reaches
+  // everyone connected right away and, optionally, everyone with an email.
+  socket.on('maintenance:set', async (
+    payload: { adminUsername?: string; adminPassword?: string; action?: string; message?: string; sendEmail?: boolean },
+    ack?: (res: object) => void
+  ) => {
+    const reply = ack ?? (() => {});
+    const admin = await checkAdmin(payload?.adminUsername, payload?.adminPassword);
+    if (!admin) return reply(await failAuth('bad_password'));
+    failedAuthAttempts = 0;
+    if (payload.action === 'end') {
+      const ended = await endNotice(db, admin.username);
+      if (!ended.ok) return reply(ended);
+      io.emit('maintenance:all', null);
+      return reply({ ok: true });
+    }
+    const started = await startNotice(db, admin.username, payload.message);
+    if (!started.ok) return reply(started);
+    io.emit('maintenance:all', started.notice);
+    let emailed: number | undefined;
+    if (payload.sendEmail) {
+      if (!mailer.enabled) return reply({ ok: true, emailed: 0, emailSkipped: 'not_configured' });
+      const people = await db.all<{ username: string; fullName: string | null; email: string | null }[]>(
+        "SELECT username, fullName, email FROM users WHERE email IS NOT NULL AND TRIM(email) != ''"
+      );
+      emailed = people.length;
+      void (async () => {
+        for (const p of people) {
+          const { subject, text, html } = maintenanceMessage(started.notice.message, { name: p.fullName || p.username, appUrl: process.env.APP_URL });
+          await mailer.send(p.email as string, subject, text, html);
+        }
+      })().catch(err => console.error('[Mailer] aviso de mantenimiento falló:', err));
+    }
+    reply({ ok: true, emailed });
   });
 
   // Team handlers
