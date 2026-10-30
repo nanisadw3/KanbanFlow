@@ -947,12 +947,16 @@ io.on('connection', async (socket) => {
       emailed = people.length;
       const author = (await db.get<{ fullName: string | null }>('SELECT fullName FROM users WHERE username = ?', [admin.username]))?.fullName || admin.username;
       const notice = published.notice;
+      // In the background, one at a time (the reply doesn't wait for Google). Failures are logged one per line
+      // by the mailer; this adds the total so it's clear how many people didn't get it.
       void (async () => {
+        let sent = 0;
         for (const p of people) {
           const o = { name: p.fullName || p.username, appUrl: process.env.APP_URL };
           const { subject, text, html } = notice.kind === 'maintenance' ? maintenanceMessage(notice.message, o) : announcementMessage(notice.message, author, o);
-          await mailer.send(p.email as string, subject, text, html);
+          if (await mailer.send(p.email as string, subject, text, html)) sent += 1;
         }
+        console.log(`[Mailer] Aviso por correo: ${sent} de ${people.length} enviados${sent < people.length ? ` (${people.length - sent} fallaron, revisa la conexión a Google)` : ''}.`);
       })().catch(err => console.error('[Mailer] aviso falló:', err));
     }
     reply({ ok: true, emailed });

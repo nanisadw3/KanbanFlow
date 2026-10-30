@@ -20,6 +20,16 @@ export interface Mailer {
 
 type Transport = { sendMail(opts: any): Promise<unknown> };
 
+// One readable line for a failed request instead of undici's huge error object: "fetch failed" alone says
+// nothing, the real reason (connection closed, DNS, timeout...) is in `cause`.
+export function describeError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  if (err.name === 'TimeoutError') return 'Google no respondió a tiempo (tiempo de espera agotado)';
+  const cause: any = (err as any).cause;
+  const why = cause ? [cause.code, cause.message].filter(Boolean).join(': ') : '';
+  return why ? `${err.message} (${why})` : err.message;
+}
+
 export function createMailer(transport: Transport | null, from: string): Mailer {
   const trySend = async (to: string, subject: string, text: string, html?: string): Promise<SendResult> => {
     if (!transport) return { ok: false, error: 'Correo no configurado' };
@@ -27,8 +37,9 @@ export function createMailer(transport: Transport | null, from: string): Mailer 
       await transport.sendMail({ from, to, subject, text, ...(html ? { html } : {}) });
       return { ok: true };
     } catch (err) {
-      console.error('[Mailer] No se pudo enviar el correo a', to, err);
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      const why = describeError(err);
+      console.error(`[Mailer] No se pudo enviar el correo a ${to}: ${why}`);
+      return { ok: false, error: why };
     }
   };
   return {
@@ -52,6 +63,23 @@ export interface MailConfig {
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const SEND_URL = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send';
 const REQUEST_TIMEOUT_MS = 15_000;
+// A flaky connection (the server closed the socket, a request timed out, Google answered 429/5xx) is retried
+// after these pauses before giving up; a real refusal (bad credentials, 4xx) is NOT retried.
+const RETRY_DELAYS_MS = [1_000, 3_000];
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+async function fetchWithRetry(fetchFn: typeof fetch, url: string, init: () => RequestInit, delays: number[]): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    const last = attempt >= delays.length;
+    try {
+      const res = await fetchFn(url, init()); // init() builds a fresh body and timeout signal for every attempt
+      if (last || (res.status < 500 && res.status !== 429)) return res;
+    } catch (err) {
+      if (last) throw err;
+    }
+    await sleep(delays[attempt]);
+  }
+}
 
 // Header values come from user data (assignee email), so strip line breaks to rule out
 // header injection.
@@ -89,13 +117,14 @@ async function googleError(res: Response): Promise<string> {
 
 export function createGmailTransport(
   cfg: Required<Pick<MailConfig, 'clientId' | 'clientSecret' | 'refreshToken'>>,
-  fetchFn: typeof fetch = fetch
+  fetchFn: typeof fetch = fetch,
+  retryDelaysMs: number[] = RETRY_DELAYS_MS
 ): Transport {
   let token: { value: string; expiresAt: number } | null = null;
 
   const accessToken = async (): Promise<string> => {
     if (token && Date.now() < token.expiresAt) return token.value;
-    const res = await fetchFn(TOKEN_URL, {
+    const res = await fetchWithRetry(fetchFn, TOKEN_URL, () => ({
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -105,7 +134,7 @@ export function createGmailTransport(
         grant_type: 'refresh_token',
       }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
+    }), retryDelaysMs);
     if (!res.ok) throw new Error(`Google rechazó las credenciales: ${await googleError(res)}`);
     const data = (await res.json()) as { access_token: string; expires_in: number };
     // Renew a minute early so a token never expires mid-request.
@@ -115,12 +144,14 @@ export function createGmailTransport(
 
   return {
     async sendMail({ from, to, subject, text, html }) {
-      const res = await fetchFn(SEND_URL, {
+      const bearer = await accessToken();
+      const raw = buildRawMessage({ from, to, subject, text, html });
+      const res = await fetchWithRetry(fetchFn, SEND_URL, () => ({
         method: 'POST',
-        headers: { Authorization: `Bearer ${await accessToken()}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ raw: buildRawMessage({ from, to, subject, text, html }) }),
+        headers: { Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ raw }),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
+      }), retryDelaysMs);
       if (!res.ok) {
         if (res.status === 401) token = null;
         throw new Error(`Gmail rechazó el envío: ${await googleError(res)}`);

@@ -298,3 +298,49 @@ test('los textos nuevos también escapan el HTML', () => {
     overdueMessage(task, { assignedByName: evil, today: '2026-10-25' }).html,
   ]) assert.ok(!html.includes(evil));
 });
+
+// ── A flaky connection is retried; a real refusal is not ─────────────────────────────────────
+
+const credsRetry = { clientId: 'id', clientSecret: 'sec', refreshToken: 'ref' };
+const jsonRes = (body: object, status = 200) => new Response(JSON.stringify(body), { status });
+
+test('reintenta si la conexión se cae (fetch failed) y al final envía', async () => {
+  let calls = 0;
+  const fetchFn = (async (url: string) => {
+    calls += 1;
+    if (calls === 1) throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'UND_ERR_SOCKET', message: 'other side closed' } });
+    if (String(url).includes('oauth2')) return jsonRes({ access_token: 't', expires_in: 3600 });
+    return jsonRes({});
+  }) as unknown as typeof fetch;
+  const transport = createGmailTransport(credsRetry, fetchFn, [0, 0]);
+  await transport.sendMail({ to: 'a@x.com', subject: 's', text: 't' });
+  assert.equal(calls, 3); // token (falló) + token + envío
+});
+
+test('reintenta ante un 503 de Google, pero no ante credenciales inválidas (401/400)', async () => {
+  let sends = 0;
+  const flaky = (async (url: string) => {
+    if (String(url).includes('oauth2')) return jsonRes({ access_token: 't', expires_in: 3600 });
+    sends += 1;
+    return sends < 3 ? jsonRes({ error: { message: 'backend error' } }, 503) : jsonRes({});
+  }) as unknown as typeof fetch;
+  await createGmailTransport(credsRetry, flaky, [0, 0]).sendMail({ to: 'a@x.com', subject: 's', text: 't' });
+  assert.equal(sends, 3);
+
+  let tokenCalls = 0;
+  const refused = (async () => { tokenCalls += 1; return jsonRes({ error: 'invalid_grant', error_description: 'Bad Request' }, 400); }) as unknown as typeof fetch;
+  await assert.rejects(createGmailTransport(credsRetry, refused, [0, 0]).sendMail({ to: 'a@x.com', subject: 's', text: 't' }), /invalid_grant|Bad Request/);
+  assert.equal(tokenCalls, 1); // un rechazo real no se reintenta
+});
+
+test('si todos los intentos fallan, lanza el último error y el mailer lo describe en una línea legible', async () => {
+  let calls = 0;
+  const down = (async () => { calls += 1; throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'UND_ERR_SOCKET', message: 'other side closed' } }); }) as unknown as typeof fetch;
+  const mailer = createMailer(createGmailTransport(credsRetry, down, [0, 0]), 'k@x.com');
+  const r = await mailer.trySend('a@x.com', 's', 't');
+  assert.equal(calls, 3);
+  assert.equal(r.ok, false);
+  assert.match(r.error ?? '', /fetch failed \(UND_ERR_SOCKET: other side closed\)/);
+  const timeout = createMailer({ sendMail: async () => { throw new DOMException('The operation was aborted due to timeout', 'TimeoutError'); } }, 'k@x.com');
+  assert.match((await timeout.trySend('a@x.com', 's', 't')).error ?? '', /no respondió a tiempo/);
+});

@@ -531,7 +531,7 @@ function App() {
     if (noticeEmail && res.emailSkipped) {
       showToast('Aviso publicado, pero el correo no está configurado: no se envió ningún correo.', false);
     } else {
-      showToast(noticeEmail && res.emailed ? `Aviso publicado y enviado por correo a ${res.emailed} ${res.emailed === 1 ? 'persona' : 'personas'}.` : 'Aviso publicado para todos.', true);
+      showToast(noticeEmail && res.emailed ? `Aviso publicado. Se está enviando por correo a ${res.emailed} ${res.emailed === 1 ? 'persona' : 'personas'} (puede tardar un poco).` : 'Aviso publicado para todos.', true);
     }
     setIsNoticeOpen(false);
   };
