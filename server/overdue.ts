@@ -18,6 +18,10 @@ interface OverdueRow {
   description: string;
   endDate: string;
   priority: string;
+  kind: string | null;
+  assignedBy: string | null;
+  assignedByName: string | null;
+  people: number;
   email: string | null;
   name: string | null;
 }
@@ -28,9 +32,13 @@ interface OverdueRow {
 export async function runOverdueCheck(db: Database, mailer: Mailer, today: string): Promise<number> {
   if (!mailer.enabled) return 0;
   const rows = await db.all<OverdueRow[]>(
-    `SELECT a.id, a.title, a.description, a.endDate, a.priority, u.email, COALESCE(u.fullName, u.username) AS name
+    `SELECT a.id, a.title, a.description, a.endDate, a.priority, a.kind, a.assignedBy,
+            u.email, COALESCE(u.fullName, u.username) AS name,
+            COALESCE(b.fullName, b.username, a.assignedBy) AS assignedByName,
+            (SELECT COUNT(*) FROM activities c WHERE a.sharedId IS NOT NULL AND c.sharedId = a.sharedId) AS people
        FROM activities a
        LEFT JOIN users u ON u.username = a.username COLLATE NOCASE
+       LEFT JOIN users b ON b.username = a.assignedBy COLLATE NOCASE
       WHERE a.endDate != '' AND a.endDate < ?
         AND a.status NOT IN ('done', 'cancelled')
         AND a.archived = 0
@@ -40,7 +48,13 @@ export async function runOverdueCheck(db: Database, mailer: Mailer, today: strin
   let sent = 0;
   for (const row of rows) {
     if (!row.email) continue;
-    const { subject, text, html } = overdueMessage(row, { name: row.name ?? undefined, today, appUrl: process.env.APP_URL });
+    // The wording follows the kind of task: a shared one reminds the team, an assigned one names who assigned it.
+    const shared = row.kind === 'shared';
+    const { subject, text, html } = overdueMessage(row, {
+      name: row.name ?? undefined, today, appUrl: process.env.APP_URL,
+      shared, people: shared ? row.people : undefined,
+      assignedByName: !shared && row.assignedBy ? (row.assignedByName ?? row.assignedBy) : undefined,
+    });
     if (!(await mailer.send(row.email, subject, text, html))) continue;
     await db.run('UPDATE activities SET overdueNotifiedAt = ? WHERE id = ?', [new Date().toISOString(), row.id]);
     sent += 1;

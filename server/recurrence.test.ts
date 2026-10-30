@@ -134,3 +134,12 @@ test('dropSeriesWhere detiene las series de un usuario o equipo', async () => {
   await dropSeriesWhere(db, 'username', 'ana');
   assert.equal((await db.get('SELECT COUNT(*) n FROM recurrences')).n, 0);
 });
+
+test('repeatLabel: la frecuencia en palabras, igual que en la app', async () => {
+  const { repeatLabel } = await import('./recurrence.ts');
+  assert.equal(repeatLabel({ repeat: 'weekly', day: 1, month: null }), 'Cada semana, los lunes');
+  assert.equal(repeatLabel({ repeat: 'biweekly', day: 3, month: null }), 'Cada 2 semanas, los miércoles');
+  assert.equal(repeatLabel({ repeat: 'monthly', day: 15, month: null }), 'Cada mes, el día 15');
+  assert.equal(repeatLabel({ repeat: 'quarterly', day: 5, month: null }), 'Cada trimestre, el día 5');
+  assert.equal(repeatLabel({ repeat: 'yearly', day: 3, month: 3 }), 'Cada año, el 3 de marzo');
+});

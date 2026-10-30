@@ -59,11 +59,16 @@ interface Theme {
 }
 
 const BLUE: Theme = { header: '#4f46e5', headerText: '#e0e7ff', soft: '#eef2ff', accent: '#4f46e5' };
+// The kind colors match the app (light theme tokens in src/index.css): a task assigned by someone else is
+// rose, a repeating one teal, a shared one violet and a "rutina" (shared + repeating) olive/lime.
+const ROSE: Theme = { header: '#a8185f', headerText: '#fce7f3', soft: '#fdf2f8', accent: '#a8185f' };
+const TEAL: Theme = { header: '#0e6663', headerText: '#ccfbf1', soft: '#f0fdfa', accent: '#0e6663' };
+const LIME: Theme = { header: '#4f6400', headerText: '#ecfccb', soft: '#f7fee7', accent: '#4f6400' };
 const RED: Theme = { header: '#dc2626', headerText: '#fee2e2', soft: '#fef2f2', accent: '#dc2626' };
 const GREEN: Theme = { header: '#059669', headerText: '#d1fae5', soft: '#ecfdf5', accent: '#059669' };
 
 const AMBER: Theme = { header: '#b45309', headerText: '#fef3c7', soft: '#fffbeb', accent: '#b45309' };
-const PURPLE: Theme = { header: '#6d43c7', headerText: '#ede9fe', soft: '#f5f3ff', accent: '#6d43c7' };
+const PURPLE: Theme = { header: '#6a3db8', headerText: '#ede9fe', soft: '#f5f3ff', accent: '#6a3db8' };
 
 interface Layout {
   subject: string;
@@ -74,6 +79,8 @@ interface Layout {
   greeting: string;
   intro: string;
   task?: MailTask;
+  taskLabel?: string; // the small label over the task card; "📝 Tarea" by default
+  note?: string;      // an extra line before the closing (e.g. what the priority means)
   highlight?: string; // the date/countdown line, with its own emoji
   quote?: string;     // a comment shown as a quote under the intro (user text: escaped like everything else)
   closing: string;
@@ -88,7 +95,7 @@ function renderHtml(l: Layout): string {
     ? `<tr><td style="padding:8px 32px 0 32px;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${l.theme.soft};border-radius:16px;border-left:6px solid ${l.theme.accent};">
           <tr><td style="padding:22px 24px;">
-            <div style="font-size:13px;letter-spacing:1px;text-transform:uppercase;color:${l.theme.accent};font-weight:700;">📝 Tarea</div>
+            <div style="font-size:13px;letter-spacing:1px;text-transform:uppercase;color:${l.theme.accent};font-weight:700;">${esc(l.taskLabel ?? '📝 Tarea')}</div>
             <div style="font-size:24px;line-height:1.3;font-weight:800;color:#0f172a;margin:6px 0 10px 0;">${esc(l.task.title)}</div>
             <div style="font-size:16px;line-height:1.6;color:#475569;margin-bottom:16px;">${l.task.description ? esc(l.task.description).replace(/\n/g, '<br>') : 'Sin descripción por ahora.'}</div>
             <span style="display:inline-block;background:${prio.bg};color:${prio.color};font-size:14px;font-weight:700;padding:6px 14px;border-radius:999px;">${prio.emoji} Prioridad ${esc(prio.label)}</span>
@@ -126,6 +133,7 @@ function renderHtml(l: Layout): string {
   ${quoteBlock}
   ${taskCard}
   ${highlight}
+  ${l.note ? `<tr><td style="padding:16px 32px 0 32px;"><div style="font-size:16px;line-height:1.6;color:#475569;">${esc(l.note)}</div></td></tr>` : ''}
   <tr><td style="padding:22px 32px 0 32px;"><div style="font-size:17px;line-height:1.65;color:#334155;">${esc(l.closing)}</div></td></tr>
   ${button}
   <tr><td style="padding:32px;"><div style="border-top:1px solid #e2e8f0;padding-top:18px;font-size:13px;line-height:1.6;color:#94a3b8;text-align:center;">Este es un aviso automático de KanbanFlow 🤖<br>${esc(l.footnote ?? 'Si ya atendiste esta tarea, puedes ignorar este mensaje.')}</div></td></tr>
@@ -146,13 +154,14 @@ function renderText(l: Layout): string {
     ...(l.task && prio
       ? [
           '',
-          `📝 Tarea: ${l.task.title}`,
+          `${l.taskLabel ?? '📝 Tarea'}: ${l.task.title}`,
           `🗒️ Descripción: ${l.task.description || 'Sin descripción por ahora.'}`,
           `${prio.emoji} Prioridad: ${prio.label}`,
           ...(l.task.endDate ? [`📅 Fecha de fin: ${formatLongDate(l.task.endDate)}`] : []),
         ]
       : []),
     ...(l.highlight ? ['', l.highlight] : []),
+    ...(l.note ? ['', l.note] : []),
     '',
     l.closing,
     ...(url ? ['', `🚀 Abrir KanbanFlow: ${url}`] : []),
@@ -175,44 +184,104 @@ function countdown(endDate: string, today?: string): string | undefined {
   return `⏳ Tienes ${d} días para completarla`;
 }
 
-export function newTaskMessage(task: MailTask, assignedByName: string, o: MessageOptions = {}): MailMessage {
+// What the task's priority means for whoever reads the email (nothing for a medium one).
+const priorityNote = (priority: string): string | undefined => {
+  const p = priority.toLowerCase();
+  if (p === 'alta') return '⚡ Es de prioridad alta: conviene empezar pronto.';
+  if (p === 'baja') return '🌿 Es de prioridad baja: sin prisa, pero no la pierdas de vista.';
+  return undefined;
+};
+
+// A task assigned to someone by an administrator. `o.repeatLabel` ("Cada semana, los lunes") means it is a
+// REPEATING task: teal, and the email explains that it comes back by itself. Otherwise it is rose, like
+// the assigned tasks in the app.
+export function newTaskMessage(task: MailTask, assignedByName: string, o: MessageOptions & { repeatLabel?: string } = {}): MailMessage {
+  if (o.repeatLabel) {
+    return build({
+      subject: `🔁 Nueva tarea repetitiva para ti: ${task.title}`,
+      preheader: `${assignedByName} te asignó una tarea que se repite: ${o.repeatLabel.toLowerCase()}.`,
+      theme: TEAL,
+      emoji: '🔁',
+      heading: '¡Tienes una tarea repetitiva!',
+      greeting: hello(o.name),
+      intro: `${assignedByName} te asignó una tarea que se repite sola, así no tienes que acordarte de pedirla de nuevo 👇`,
+      taskLabel: '🔁 Tarea repetitiva',
+      task,
+      highlight: `🔁 ${o.repeatLabel}`,
+      note: priorityNote(task.priority),
+      closing: 'Cada vez que toque aparecerá en tu tablero, en "Por hacer" y al 0%. No lleva fecha de fin, así que no se marca como retrasada; solo ve completando cada una. 🌀',
+      appUrl: o.appUrl,
+    });
+  }
   return build({
     subject: `📌 Nueva tarea para ti: ${task.title}`,
-    preheader: `${assignedByName} te asignó una nueva tarea. ¡Échale un vistazo!`,
-    theme: BLUE,
-    emoji: '📋',
+    preheader: `${assignedByName} te asignó una tarea nueva.`,
+    theme: ROSE,
+    emoji: '📌',
     heading: '¡Tienes una nueva tarea!',
     greeting: hello(o.name),
-    intro: `${assignedByName} te asignó una nueva tarea en KanbanFlow. Aquí tienes los detalles para que la tengas a la mano 👇`,
+    intro: `${assignedByName} te asignó una tarea en KanbanFlow. Aquí tienes los detalles para que la tengas a la mano 👇`,
+    taskLabel: '📝 Tarea asignada',
     task,
     highlight: countdown(task.endDate, o.today),
-    closing: 'Entra a KanbanFlow para ver todo con calma y mantener tu avance al día. ¡Tú puedes con esto! 💪✨',
+    note: priorityNote(task.priority),
+    closing: `La verás en tu tablero marcada en rosa, con la etiqueta "Asignada por ${assignedByName}". Entra a KanbanFlow para ver todo con calma y mantener tu avance al día. ¡Tú puedes con esto! 💪✨`,
     appUrl: o.appUrl,
   });
 }
 
-// `participants` are the display names of everyone the task was shared with. `o.participant` is
-// false for an administrator who only gets the notice.
+// `participants` are the display names of everyone the task was shared with. Options:
+//  - `participant` is false for an administrator who only gets the notice;
+//  - `added` means this person was ADDED later to a task already in progress (not created with them);
+//  - `repeatLabel` means it is a "rutina" (shared + repeating): olive/lime and it explains each cycle.
 export function sharedTaskMessage(
   task: MailTask,
   createdByName: string,
   participants: string[],
-  o: MessageOptions & { participant?: boolean } = {}
+  o: MessageOptions & { participant?: boolean; added?: boolean; repeatLabel?: string } = {}
 ): MailMessage {
   const who = participants.join(', ');
   const isParticipant = o.participant !== false;
+  const routine = !!o.repeatLabel;
+  const group = `${participants.length} ${participants.length === 1 ? 'persona' : 'personas'}`;
+
+  if (routine) {
+    return build({
+      subject: `🔄 ${o.added ? 'Te agregaron a una rutina' : 'Nueva rutina de equipo'}: ${task.title}`,
+      preheader: `${createdByName} ${o.added ? 'te agregó a' : 'creó'} una rutina con ${group}: ${o.repeatLabel!.toLowerCase()}.`,
+      theme: LIME,
+      emoji: '🔄',
+      heading: o.added ? '¡Ya eres parte de una rutina!' : '¡Nueva rutina de equipo!',
+      greeting: hello(o.name),
+      intro: isParticipant
+        ? `${createdByName} ${o.added ? 'te agregó a' : 'creó'} una rutina: una tarea compartida que se repite sola. El grupo: ${who}. Cada quien lleva su propio avance y el equipo ve el promedio 👇`
+        : `${createdByName} creó una rutina (una tarea compartida que se repite) entre ${who}. Te avisamos porque eres administrador 👇`,
+      taskLabel: '🔄 Rutina',
+      task,
+      highlight: `🔁 ${o.repeatLabel}`,
+      note: priorityNote(task.priority),
+      closing: isParticipant
+        ? 'Cada vez que toque, la rutina vuelve a aparecer en tu tablero en "Por hacer", al 0% y con los comentarios en blanco. Entra, avanza y comenta con el grupo. 🔄'
+        : 'Cada vez que toque se crea de nuevo para todo el grupo. Puedes seguir el avance de cada persona desde KanbanFlow. 🔄',
+      appUrl: o.appUrl,
+    });
+  }
   return build({
-    subject: `🤝 Nueva tarea compartida: ${task.title}`,
-    preheader: `${createdByName} creó una tarea compartida con ${participants.length} ${participants.length === 1 ? 'persona' : 'personas'}.`,
+    subject: `🤝 ${o.added ? 'Te agregaron a una tarea compartida' : 'Nueva tarea compartida'}: ${task.title}`,
+    preheader: `${createdByName} ${o.added ? 'te agregó a' : 'creó'} una tarea compartida con ${group}.`,
     theme: PURPLE,
     emoji: '🤝',
-    heading: '¡Nueva tarea compartida!',
+    heading: o.added ? '¡Te sumaron a una tarea!' : '¡Nueva tarea compartida!',
     greeting: hello(o.name),
     intro: isParticipant
-      ? `${createdByName} creó una tarea compartida y tú formas parte del grupo: ${who}. Cada quien lleva su propio avance y el equipo ve el promedio 👇`
+      ? o.added
+        ? `${createdByName} te agregó a una tarea compartida que ya estaba en marcha. El grupo: ${who}. Cada quien lleva su propio avance y el equipo ve el promedio 👇`
+        : `${createdByName} creó una tarea compartida y tú formas parte del grupo: ${who}. Cada quien lleva su propio avance y el equipo ve el promedio 👇`
       : `${createdByName} creó una tarea compartida entre ${who}. Te avisamos porque eres administrador 👇`,
+    taskLabel: '🤝 Tarea compartida',
     task,
     highlight: countdown(task.endDate, o.today),
+    note: priorityNote(task.priority),
     closing: isParticipant
       ? 'Entra a KanbanFlow, actualiza tu avance y deja comentarios para que todo el grupo esté al tanto. ¡A trabajar en equipo! 💜'
       : 'Puedes seguir el avance de cada persona y los comentarios desde KanbanFlow. 💜',
@@ -220,20 +289,21 @@ export function sharedTaskMessage(
   });
 }
 
-// A participant commented on a shared task. Only the first unread comment of each person is emailed
-// (see commentRecipients), so this reads as "there is news", not as a transcript.
-export function commentMessage(task: MailTask, authorName: string, text: string, o: MessageOptions = {}): MailMessage {
+// A participant commented on a shared task (or a "rutina", with `o.routine`). Only the first unread comment of
+// each person is emailed (see commentRecipients), so this reads as "there is news", not as a transcript.
+export function commentMessage(task: MailTask, authorName: string, text: string, o: MessageOptions & { routine?: boolean } = {}): MailMessage {
   const excerpt = text.length > 400 ? `${text.slice(0, 400).trimEnd()}…` : text;
+  const what = o.routine ? 'la rutina' : 'la tarea compartida';
   return build({
-    subject: `💬 ${authorName} comentó en: ${task.title}`,
-    preheader: `${authorName} dejó un comentario en una tarea compartida contigo.`,
-    theme: PURPLE,
+    subject: `💬 ${authorName} comentó en${o.routine ? ' la rutina' : ''}: ${task.title}`,
+    preheader: `${authorName} dejó un comentario en ${o.routine ? 'una rutina' : 'una tarea compartida'} contigo.`,
+    theme: o.routine ? LIME : PURPLE,
     emoji: '💬',
-    heading: 'Nuevo comentario',
+    heading: o.routine ? 'Nuevo comentario en tu rutina' : 'Nuevo comentario',
     greeting: hello(o.name),
-    intro: `${authorName} comentó en la tarea compartida "${task.title}":`,
+    intro: `${authorName} comentó en ${what} "${task.title}":`,
     quote: excerpt,
-    closing: 'Entra a KanbanFlow para leer la conversación y responder. Si llegan más comentarios, los verás marcados en la tarea (no te enviaremos otro correo hasta que leas este). 💜',
+    closing: `Entra a KanbanFlow para leer la conversación y responder. Si llegan más comentarios, los verás marcados en la tarea (no te enviaremos otro correo hasta que leas este). ${o.routine ? '🔄' : '💜'}`,
     appUrl: o.appUrl,
   });
 }
@@ -272,9 +342,22 @@ export function announcementMessage(message: string, authorName: string, o: Mess
   });
 }
 
-export function overdueMessage(task: MailTask, o: MessageOptions = {}): MailMessage {
+// An overdue task. Personalized: one someone ASSIGNED says who (`assignedByName`), a shared one reminds that
+// the person's progress counts for the whole team (`shared`, `people`). Always red: overdue is red in the app.
+export function overdueMessage(task: MailTask, o: MessageOptions & { assignedByName?: string; shared?: boolean; people?: number } = {}): MailMessage {
   const late = o.today ? daysBetween(task.endDate, o.today) : 0;
   const lateText = late === 1 ? 'venció ayer' : late > 1 ? `venció hace ${late} días` : 'ya venció';
+  const urgent = task.priority.toLowerCase() === 'alta' ? '⚡ Era de prioridad alta, así que conviene ponerla al día cuanto antes.' : undefined;
+  const intro = o.shared
+    ? `Se nos pasó la fecha de una tarea compartida en la que participas${o.people ? ` (con ${o.people} ${o.people === 1 ? 'persona' : 'personas'})` : ''} y ${lateText} 😬. Tu avance suma al del equipo, así que un empujón tuyo ayuda a todos.`
+    : o.assignedByName
+      ? `La tarea que te asignó ${o.assignedByName} ${lateText} 😬. No pasa nada: todavía se puede poner al día.`
+      : `Se nos pasó la fecha de una de tus tareas y ${lateText} 😬. No pasa nada: todavía se puede poner al día.`;
+  const closing = o.shared
+    ? 'Entra a KanbanFlow, actualiza tu avance y avisa en los comentarios si algo te detiene. ¡Entre todos sale! 🚀'
+    : o.assignedByName
+      ? `Entra a KanbanFlow, actualiza su estado o, si necesitas más tiempo, avísale a ${o.assignedByName} para ajustar la fecha. 🚀`
+      : 'Entra a KanbanFlow, actualiza su estado o ajusta la fecha si hace falta. ¡Un pequeño empujón y queda lista! 🚀';
   return build({
     subject: `⏰ Tarea retrasada: ${task.title}`,
     preheader: `Tu tarea ${lateText}. Un momento para ponerla al día.`,
@@ -282,10 +365,12 @@ export function overdueMessage(task: MailTask, o: MessageOptions = {}): MailMess
     emoji: '⏰',
     heading: 'Una tarea se retrasó',
     greeting: hello(o.name),
-    intro: `Se nos pasó la fecha de una de tus tareas y ${lateText} 😬. No pasa nada: todavía se puede poner al día.`,
+    intro,
+    taskLabel: o.shared ? '🤝 Tarea compartida' : o.assignedByName ? '📝 Tarea asignada' : undefined,
     task,
     highlight: late > 0 ? `🕒 Retraso: ${late === 1 ? '1 día' : `${late} días`}` : undefined,
-    closing: 'Entra a KanbanFlow, actualiza su estado o ajusta la fecha si hace falta. ¡Un pequeño empujón y queda lista! 🚀',
+    note: urgent,
+    closing,
     appUrl: o.appUrl,
   });
 }

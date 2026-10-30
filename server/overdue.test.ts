@@ -11,7 +11,8 @@ async function makeDb(): Promise<Database> {
     CREATE TABLE users (username TEXT PRIMARY KEY, fullName TEXT, role TEXT, lastLogin TEXT, email TEXT);
     CREATE TABLE activities (id TEXT PRIMARY KEY, title TEXT, description TEXT, startDate TEXT, endDate TEXT,
       status TEXT, username TEXT, createdAt TEXT, assignedBy TEXT, priority TEXT, progress INTEGER,
-      teamId TEXT, completedAt TEXT, archived INTEGER DEFAULT 0, overdueNotifiedAt TEXT);
+      teamId TEXT, completedAt TEXT, archived INTEGER DEFAULT 0, overdueNotifiedAt TEXT,
+      kind TEXT NOT NULL DEFAULT 'single', sharedId TEXT, seriesId TEXT);
     INSERT INTO users VALUES ('Ana','Ana P','user','x','ana@x.com'), ('Sin','Sin Correo','user','x',NULL);
   `);
   return db;
@@ -134,4 +135,21 @@ test('una tarea que llega mientras corre una pasada se avisa en una repetición 
 test('msUntilNextLocalMidnight cuenta hasta la próxima medianoche local', () => {
   assert.equal(msUntilNextLocalMidnight(new Date(2026, 9, 16, 23, 59, 30)), 30_000);
   assert.equal(msUntilNextLocalMidnight(new Date(2026, 9, 16, 12, 0, 0)), 12 * 3600_000);
+});
+
+test('el aviso de retraso cambia según la tarea: asignada por alguien o compartida', async () => {
+  const db = await makeDb(); const { sent, mailer } = okMailer();
+  await db.run("INSERT INTO users VALUES ('Beto','Beto R','user','x','beto@x.com')");
+  await addAct(db, 'a', '2026-10-10', 'todo');
+  await db.run("UPDATE activities SET assignedBy = 'Beto' WHERE id = 'a'");
+  await addAct(db, 's1', '2026-10-10', 'todo');
+  await db.run("UPDATE activities SET kind = 'shared', sharedId = 'shr_1' WHERE id = 's1'");
+  await addAct(db, 's2', '2026-10-10', 'todo', 'Beto');
+  await db.run("UPDATE activities SET kind = 'shared', sharedId = 'shr_1', assignedBy = 'Ana' WHERE id = 's2'");
+  assert.equal(await runOverdueCheck(db, mailer, '2026-10-16'), 3);
+  const byTask = (id: string) => sent.find(m => m.subject.endsWith('T' + id));
+  assert.match(byTask('a').text, /La tarea que te asignó Beto R venció hace 6 días/);
+  assert.match(byTask('s1').text, /tarea compartida en la que participas \(con 2 personas\)/);
+  assert.match(byTask('s2').text, /tarea compartida en la que participas/); // asignada o no, una compartida se trata como compartida
+  assert.ok(!/te asignó/.test(byTask('s2').text));
 });

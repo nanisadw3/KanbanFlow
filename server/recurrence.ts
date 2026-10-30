@@ -104,6 +104,21 @@ export function dueOccurrence(rule: Rule, last: string, today: string): string |
   return found;
 }
 
+// "Cada semana, los lunes" — the same wording the app shows (src/taskKinds.ts describeRepeat), for emails.
+const EVERY: Record<Repeat, string> = {
+  weekly: 'Cada semana', biweekly: 'Cada 2 semanas', monthly: 'Cada mes',
+  quarterly: 'Cada trimestre', semiannual: 'Cada semestre', yearly: 'Cada año',
+};
+const WEEKDAY_NAMES = ['', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes'];
+const MONTH_NAMES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+
+export function repeatLabel(rule: Rule): string {
+  const every = EVERY[rule.repeat];
+  if (rule.repeat === 'weekly' || rule.repeat === 'biweekly') return `${every}, los ${WEEKDAY_NAMES[rule.day] ?? 'lunes'}`;
+  if (rule.repeat === 'yearly') return `${every}, el ${rule.day} de ${MONTH_NAMES[(rule.month ?? 1) - 1]}`;
+  return `${every}, el día ${rule.day}`;
+}
+
 export async function ensureRecurrenceTable(db: Database): Promise<void> {
   await db.exec(`
     CREATE TABLE IF NOT EXISTS recurrences (

@@ -218,3 +218,83 @@ test('correo de comentario: recorta los comentarios muy largos', () => {
   assert.ok(m.text.length < 900);
   assert.match(m.text, /…/);
 });
+
+// ── Colors and wording that follow the kind of task (same colors as the app) ──────────────────
+
+const COLORS = { shared: '#6a3db8', recurring: '#0e6663', assigned: '#a8185f', routine: '#4f6400', overdue: '#dc2626' };
+
+test('tarea asignada por alguien: rosa como en la app, lo dice y avisa la prioridad', () => {
+  const m = newTaskMessage(task, 'Roberto', { name: 'Ana P', today: '2026-10-15' });
+  assert.ok(m.html.includes(COLORS.assigned));
+  assert.match(m.text, /Tarea asignada/);
+  assert.match(m.text, /Asignada por Roberto/);
+  assert.match(m.text, /prioridad alta: conviene empezar pronto/);
+  assert.match(newTaskMessage({ ...task, priority: 'baja' }, 'R').text, /sin prisa/);
+  assert.ok(!/prioridad (alta|baja)/.test(newTaskMessage({ ...task, priority: 'media' }, 'R').text.replace(/Prioridad: \S+/g, '')));
+});
+
+test('tarea repetitiva asignada: verde azulado, dice cada cuánto y que no lleva fecha de fin', () => {
+  const m = newTaskMessage({ ...task, endDate: '' }, 'Roberto', { name: 'Ana P', repeatLabel: 'Cada semana, los lunes' });
+  assert.ok(m.html.includes(COLORS.recurring) && !m.html.includes(COLORS.assigned));
+  assert.match(m.subject, /repetitiva/i);
+  assert.match(m.text, /Cada semana, los lunes/);
+  assert.match(m.text, /No lleva fecha de fin/);
+  assert.ok(!m.text.includes('Fecha de fin'));
+});
+
+test('tarea compartida: violeta; si te agregaron después lo dice; el admin sigue distinguiéndose', () => {
+  const created = sharedTaskMessage(task, 'Roberto', ['Ana', 'Beto'], { name: 'Ana P' });
+  assert.ok(created.html.includes(COLORS.shared));
+  assert.match(created.text, /creó una tarea compartida y tú formas parte/);
+  const added = sharedTaskMessage(task, 'Roberto', ['Ana', 'Beto'], { name: 'Ana P', added: true });
+  assert.match(added.subject, /Te agregaron a una tarea compartida/);
+  assert.match(added.text, /te agregó a una tarea compartida que ya estaba en marcha/);
+  assert.match(sharedTaskMessage(task, 'Roberto', ['Ana'], { participant: false }).text, /eres administrador/);
+});
+
+test('rutina (compartida y repetitiva): lima, con su nombre, la frecuencia y cómo funciona cada ciclo', () => {
+  const m = sharedTaskMessage({ ...task, endDate: '' }, 'Roberto', ['Ana', 'Beto'], { name: 'Ana P', repeatLabel: 'Cada mes, el día 15' });
+  assert.ok(m.html.includes(COLORS.routine) && !m.html.includes(COLORS.shared));
+  assert.match(m.subject, /Nueva rutina de equipo/);
+  assert.match(m.text, /rutina: una tarea compartida que se repite sola/);
+  assert.match(m.text, /Cada mes, el día 15/);
+  assert.match(m.text, /al 0% y con los comentarios en blanco/);
+  assert.match(sharedTaskMessage(task, 'R', ['Ana'], { repeatLabel: 'x', added: true }).subject, /Te agregaron a una rutina/);
+  assert.match(sharedTaskMessage(task, 'R', ['Ana'], { repeatLabel: 'x', participant: false }).text, /eres administrador/);
+});
+
+test('comentario: en una rutina usa lima y lo dice; en una tarea compartida normal queda como antes', () => {
+  const normal = commentMessage(task, 'Beto', 'hola');
+  assert.equal(normal.subject, '💬 Beto comentó en: Entregar reporte');
+  assert.ok(normal.html.includes(COLORS.shared));
+  const routine = commentMessage(task, 'Beto', 'hola', { routine: true });
+  assert.equal(routine.subject, '💬 Beto comentó en la rutina: Entregar reporte');
+  assert.ok(routine.html.includes(COLORS.routine));
+  assert.match(routine.text, /Nuevo comentario en tu rutina/);
+});
+
+test('retraso: sigue en rojo pero cambia el texto si fue asignada o si es compartida', () => {
+  const base = overdueMessage(task, { today: '2026-10-25' });
+  assert.ok(base.html.includes(COLORS.overdue));
+  assert.match(base.text, /una de tus tareas/);
+  const assigned = overdueMessage(task, { today: '2026-10-25', assignedByName: 'Roberto' });
+  assert.ok(assigned.html.includes(COLORS.overdue));
+  assert.match(assigned.text, /La tarea que te asignó Roberto venció hace 5 días/);
+  assert.match(assigned.text, /avísale a Roberto/);
+  const shared = overdueMessage(task, { today: '2026-10-25', shared: true, people: 3 });
+  assert.match(shared.text, /tarea compartida en la que participas \(con 3 personas\)/);
+  assert.match(shared.text, /Tu avance suma al del equipo/);
+  assert.match(base.text, /prioridad alta, así que conviene ponerla al día/);
+  assert.ok(!/Era de prioridad alta/.test(overdueMessage({ ...task, priority: 'media' }, { today: '2026-10-25' }).text));
+});
+
+test('los textos nuevos también escapan el HTML', () => {
+  const evil = '<script>alert(1)</script>';
+  for (const html of [
+    newTaskMessage(task, evil, { repeatLabel: evil }).html,
+    newTaskMessage(task, evil).html,
+    sharedTaskMessage(task, evil, [evil], { repeatLabel: evil, added: true }).html,
+    commentMessage(task, evil, evil, { routine: true }).html,
+    overdueMessage(task, { assignedByName: evil, today: '2026-10-25' }).html,
+  ]) assert.ok(!html.includes(evil));
+});

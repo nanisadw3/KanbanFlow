@@ -15,7 +15,7 @@ import { validateNewUser, createUser, touchLogin } from './users.ts';
 import { changeUserRole } from './roles.ts';
 import { updateProfile, parsePhoto } from './profile.ts';
 import { createOverdueChecker, localToday, msUntilNextLocalMidnight } from './overdue.ts';
-import { isRepeat, normalizeRule, ensureRecurrenceTable, createSeries, stopSeries, dropSeriesWhere, runRecurrences } from './recurrence.ts';
+import { isRepeat, normalizeRule, ensureRecurrenceTable, createSeries, stopSeries, dropSeriesWhere, runRecurrences, repeatLabel } from './recurrence.ts';
 import { changeKind, type KindChangeInput } from './kindChange.ts';
 import { ensureNoticesTable, listActive, publishNotice, endNotice } from './notices.ts';
 import {
@@ -367,7 +367,7 @@ async function broadcastPresence() {
 }
 
 // Fire-and-forget: a mail problem must never block or fail the task creation.
-async function notifyNewTask(task: Activity) {
+async function notifyNewTask(task: Activity, repeatText?: string) {
   if (!mailer.enabled || !task.assignedBy) return;
   const assigner = await db.get<{ username: string; fullName: string | null; role: string | null }>(
     'SELECT username, fullName, role FROM users WHERE username = ? COLLATE NOCASE', [task.assignedBy]
@@ -379,14 +379,32 @@ async function notifyNewTask(task: Activity) {
   );
   if (!assignee?.email) return;
   const { subject, text, html } = newTaskMessage(task, assigner.fullName || assigner.username, {
-    name: assignee.fullName || assignee.username, today: localToday(), appUrl: process.env.APP_URL,
+    name: assignee.fullName || assignee.username, today: localToday(), appUrl: process.env.APP_URL, repeatLabel: repeatText,
   });
   await mailer.send(assignee.email, subject, text, html);
 }
 
-// A shared task tells every participant and every admin (once each, never the creator).
-async function notifySharedTask(task: { title: string; description: string; endDate: string; priority: string }, creator: string, usernames: string[], onlyTo?: string[]) {
+// How often a repeating task (or rutina) comes back, in words; undefined when it doesn't repeat.
+async function repeatLabelFor(by: { sharedId?: string; activityId?: string }): Promise<string | undefined> {
+  const row = by.sharedId
+    ? await db.get<{ repeat: string; day: number; month: number | null }>(
+        'SELECT r.repeat, r.day, r.month FROM activities a JOIN recurrences r ON r.id = a.seriesId WHERE a.sharedId = ? LIMIT 1', [by.sharedId])
+    : await db.get<{ repeat: string; day: number; month: number | null }>(
+        'SELECT r.repeat, r.day, r.month FROM activities a JOIN recurrences r ON r.id = a.seriesId WHERE a.id = ?', [by.activityId ?? '']);
+  return row && isRepeat(row.repeat) ? repeatLabel(normalizeRule(row.repeat, row.day, row.month)) : undefined;
+}
+
+// A shared task tells every participant and every admin (once each, never the creator). `onlyTo` means people
+// ADDED later to a task in progress. A rutina (shared + repeating) gets its own wording and color.
+async function notifySharedTask(
+  task: { title: string; description: string; endDate: string; priority: string },
+  creator: string,
+  usernames: string[],
+  onlyTo?: string[],
+  group?: { sharedId?: string; activityId?: string }
+) {
   if (!mailer.enabled) return;
+  const repeatText = group ? await repeatLabelFor(group) : undefined;
   const people = await db.all<{ username: string; fullName: string | null; email: string | null; role: string | null }[]>(
     'SELECT username, fullName, email, role FROM users'
   );
@@ -401,6 +419,7 @@ async function notifySharedTask(task: { title: string; description: string; endD
     if (only && !only.has(r.username.toLowerCase())) continue;
     const { subject, text, html } = sharedTaskMessage(task, creatorName, names, {
       name: r.fullName || r.username, today: localToday(), appUrl: process.env.APP_URL, participant: r.participant,
+      added: !!onlyTo, repeatLabel: repeatText,
     });
     await mailer.send(r.email, subject, text, html);
   }
@@ -409,15 +428,15 @@ async function notifySharedTask(task: { title: string; description: string; endD
 // A comment on a shared task emails the other participants, but only the first unread one each (see commentRecipients).
 async function notifyComment(sharedId: string, author: string, text: string) {
   if (!mailer.enabled) return;
-  const task = await db.get<{ title: string; description: string; endDate: string; priority: string }>(
-    'SELECT title, description, endDate, priority FROM activities WHERE sharedId = ? LIMIT 1', [sharedId]
+  const task = await db.get<{ title: string; description: string; endDate: string; priority: string; seriesId: string | null }>(
+    'SELECT title, description, endDate, priority, seriesId FROM activities WHERE sharedId = ? LIMIT 1', [sharedId]
   );
   const authorRow = await db.get<{ username: string; fullName: string | null }>('SELECT username, fullName FROM users WHERE username = ? COLLATE NOCASE', [author]);
   if (!task || !authorRow) return;
   const authorName = authorRow.fullName || authorRow.username;
   for (const r of await commentRecipients(db, sharedId, authorRow.username)) {
     const { subject, text: body, html } = commentMessage(task, authorName, text, {
-      name: r.fullName || r.username, appUrl: process.env.APP_URL,
+      name: r.fullName || r.username, appUrl: process.env.APP_URL, routine: !!task.seriesId,
     });
     await mailer.send(r.email, subject, body, html);
   }
@@ -475,7 +494,7 @@ io.on('connection', async (socket) => {
         seriesId,
       ]
     );
-    void notifyNewTask({ ...activityData, startDate, endDate, id, createdAt }).catch(err => console.error('[Mailer] notifyNewTask falló:', err));
+    void notifyNewTask({ ...activityData, startDate, endDate, id, createdAt }, rule ? repeatLabel(rule) : undefined).catch(err => console.error('[Mailer] notifyNewTask falló:', err));
     await broadcastActivities();
     void checkOverdue(); // a task created already overdue is notified right away
   });
@@ -490,8 +509,8 @@ io.on('connection', async (socket) => {
     const valid = validateShared(payload ?? {}, known);
     if (!valid.ok) return reply({ ok: false, error: valid.error });
     const task = valid.task;
-    await createSharedTask(db, task);
-    void notifySharedTask(task, task.assignedBy, task.usernames).catch(err => console.error('[Mailer] notifySharedTask falló:', err));
+    const created = await createSharedTask(db, task);
+    void notifySharedTask(task, task.assignedBy, task.usernames, undefined, { sharedId: created.sharedId }).catch(err => console.error('[Mailer] notifySharedTask falló:', err));
     await broadcastActivities();
     void checkOverdue();
     reply({ ok: true });
@@ -527,7 +546,7 @@ io.on('connection', async (socket) => {
     await broadcastActivities();
     await cleanupAfterDelete();
     if (result.added.length > 0) {
-      void notifySharedTask(result.task, result.by, result.all, result.added).catch(err => console.error('[Mailer] notifySharedTask falló:', err));
+      void notifySharedTask(result.task, result.by, result.all, result.added, { sharedId: typeof payload?.sharedId === 'string' ? payload.sharedId : undefined }).catch(err => console.error('[Mailer] notifySharedTask falló:', err));
     }
     void checkOverdue();
     reply({ ok: true });
@@ -544,7 +563,7 @@ io.on('connection', async (socket) => {
     await broadcastActivities();
     await cleanupAfterDelete();
     if (result.to === 'shared') {
-      void notifySharedTask(result.task, result.by, result.all, result.added).catch(err => console.error('[Mailer] notifySharedTask falló:', err));
+      void notifySharedTask(result.task, result.by, result.all, result.added, { activityId: typeof payload?.id === 'string' ? payload.id : undefined }).catch(err => console.error('[Mailer] notifySharedTask falló:', err));
     }
     void checkOverdue();
     reply({ ok: true });
