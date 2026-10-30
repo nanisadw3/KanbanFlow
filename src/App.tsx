@@ -141,6 +141,8 @@ function App() {
   const [noticePass, setNoticePass] = useState('');
   const [noticeBusy, setNoticeBusy] = useState(false);
   const [noticeError, setNoticeError] = useState('');
+  const noticePassRef = useRef<HTMLInputElement>(null);
+  const noticeErrorRef = useRef<HTMLParagraphElement>(null);
   // Normal notices can be closed by each person (remembered in this browser only).
   const [dismissedNotices, setDismissedNotices] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem('dismissedNotices') || '[]'); } catch { return []; }
@@ -493,8 +495,18 @@ function App() {
     timeout: 'No se pudo conectar con el servidor.',
   } as Record<string, string>)[error ?? ''] ?? 'No se pudo completar la acción.';
 
+  // Every action that needs the password says so (and takes you to the field) instead of doing nothing.
+  const needNoticePassword = (): boolean => {
+    if (noticePass) return false;
+    setNoticeError('Escribe tu contraseña de administrador para continuar.');
+    noticePassRef.current?.focus();
+    return true;
+  };
+
   const handlePublishNotice = async () => {
     if (!user) return;
+    if (noticeKind === 'normal' && !noticeMessage.trim()) { setNoticeError('Escribe el mensaje del aviso.'); return; }
+    if (needNoticePassword()) return;
     setNoticeBusy(true);
     setNoticeError('');
     const res = await publishNotice({
@@ -513,6 +525,7 @@ function App() {
 
   const handleEndNotice = async (id: string) => {
     if (!user) return;
+    if (needNoticePassword()) return;
     setNoticeBusy(true);
     setNoticeError('');
     const res = await endNotice({ adminUsername: user.username, adminPassword: noticePass, id });
@@ -520,6 +533,11 @@ function App() {
     if (!res.ok) { setNoticeError(noticeErrorText(res.error)); return; }
     showToast('El aviso se quitó.', true);
   };
+
+  // The error sits at the bottom of a scrollable dialog: bring it into view whenever one appears.
+  useEffect(() => {
+    if (noticeError) noticeErrorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [noticeError]);
 
   const dismissNotice = (id: string) => {
     setDismissedNotices(prev => {
@@ -3099,8 +3117,8 @@ function App() {
                             type="button"
                             className="btn btn-secondary"
                             style={{ width: 'auto' }}
-                            disabled={noticeBusy || !noticePass || (n.kind === 'maintenance' && !isManager)}
-                            data-tip={!noticePass ? 'Escribe tu contraseña abajo para quitarlo' : n.kind === 'maintenance' && !isManager ? 'Solo el administrador principal' : undefined}
+                            disabled={noticeBusy || (n.kind === 'maintenance' && !isManager)}
+                            data-tip={n.kind === 'maintenance' && !isManager ? 'Solo el administrador principal' : undefined}
                             onClick={() => void handleEndNotice(n.id)}
                           >
                             Quitar
@@ -3132,7 +3150,6 @@ function App() {
                     className="form-input"
                     rows={4}
                     maxLength={500}
-                    required={kind === 'normal'}
                     placeholder={kind === 'normal' ? 'Escribe el aviso para todos…' : 'Vamos a agregar una nueva funcionalidad. KanbanFlow estará en mantenimiento por un momento y puede que no esté disponible unos minutos.'}
                     value={noticeMessage}
                     onChange={(e) => setNoticeMessage(e.target.value)}
@@ -3170,11 +3187,11 @@ function App() {
                     autoComplete="current-password"
                     value={noticePass}
                     onChange={(e) => setNoticePass(e.target.value)}
-                    required
+                    ref={noticePassRef}
                   />
                 </div>
 
-                {noticeError && <p className="form-error" style={{ margin: 0, fontSize: '0.85rem' }}>{noticeError}</p>}
+                {noticeError && <p ref={noticeErrorRef} className="form-error" role="alert" style={{ margin: 0, fontSize: '0.85rem' }}>{noticeError}</p>}
 
                 <div className="modal-footer">
                   <button type="button" className="btn btn-secondary" onClick={() => setIsNoticeOpen(false)} style={{ width: 'auto' }}>

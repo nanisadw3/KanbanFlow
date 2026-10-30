@@ -3211,3 +3211,9 @@ body.dark-theme .prio-baja {
 .app-container-wide {
   max-width: 1800px;
 }
+
+/* A disabled button must look disabled (it used to look exactly like an enabled one and seemed stuck). */
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
