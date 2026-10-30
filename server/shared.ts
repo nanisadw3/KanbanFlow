@@ -61,7 +61,7 @@ export function validateShared(input: SharedInput, known: string[]): { ok: true;
 const newId = (prefix: string) => `${prefix}_${Math.random().toString(36).substring(2, 11)}`;
 
 // Inserts one activity per participant. The creator's own copy carries no "assigned by".
-export async function createSharedTask(db: Database, t: ValidShared, now: Date = new Date()): Promise<{ sharedId: string; ids: string[] }> {
+export async function createSharedTask(db: Database, t: ValidShared, now: Date = new Date(), seriesId: string | null = null): Promise<{ sharedId: string; ids: string[] }> {
   const sharedId = newId('shr');
   const ids: string[] = [];
   for (const username of t.usernames) {
@@ -69,9 +69,9 @@ export async function createSharedTask(db: Database, t: ValidShared, now: Date =
     ids.push(id);
     const mine = !!t.assignedBy && username.toLowerCase() === t.assignedBy.toLowerCase();
     await db.run(
-      `INSERT INTO activities (id, title, description, startDate, endDate, status, username, createdAt, assignedBy, priority, progress, teamId, kind, sharedId)
-       VALUES (?, ?, ?, ?, ?, 'todo', ?, ?, ?, ?, 0, ?, 'shared', ?)`,
-      [id, t.title, t.description, t.startDate, t.endDate, username, now.toISOString(), mine ? null : (t.assignedBy || null), t.priority, t.teamId, sharedId]
+      `INSERT INTO activities (id, title, description, startDate, endDate, status, username, createdAt, assignedBy, priority, progress, teamId, kind, sharedId, seriesId)
+       VALUES (?, ?, ?, ?, ?, 'todo', ?, ?, ?, ?, 0, ?, 'shared', ?, ?)`,
+      [id, t.title, t.description, t.startDate, t.endDate, username, now.toISOString(), mine ? null : (t.assignedBy || null), t.priority, t.teamId, sharedId, seriesId]
     );
   }
   return { sharedId, ids };
@@ -245,8 +245,8 @@ export async function setParticipants(
   | { ok: false; error: ParticipantsError }
 > {
   const sharedId = typeof input.sharedId === 'string' ? input.sharedId : '';
-  const copies = await db.all<{ id: string; username: string; title: string; description: string; startDate: string; endDate: string; priority: string; teamId: string | null }[]>(
-    'SELECT id, username, title, description, startDate, endDate, priority, teamId FROM activities WHERE sharedId = ?', [sharedId]
+  const copies = await db.all<{ id: string; username: string; title: string; description: string; startDate: string; endDate: string; priority: string; teamId: string | null; seriesId: string | null }[]>(
+    'SELECT id, username, title, description, startDate, endDate, priority, teamId, seriesId FROM activities WHERE sharedId = ?', [sharedId]
   );
   if (copies.length === 0) return { ok: false, error: 'not_found' };
 
@@ -279,10 +279,14 @@ export async function setParticipants(
   for (const username of added) {
     const mine = username.toLowerCase() === actor.username.toLowerCase();
     await db.run(
-      `INSERT INTO activities (id, title, description, startDate, endDate, status, username, createdAt, assignedBy, priority, progress, teamId, kind, sharedId)
-       VALUES (?, ?, ?, ?, ?, 'todo', ?, ?, ?, ?, 0, ?, 'shared', ?)`,
-      [newId('act'), template.title, template.description, template.startDate, template.endDate, username, now.toISOString(), mine ? null : actor.username, template.priority, template.teamId, sharedId]
+      `INSERT INTO activities (id, title, description, startDate, endDate, status, username, createdAt, assignedBy, priority, progress, teamId, kind, sharedId, seriesId)
+       VALUES (?, ?, ?, ?, ?, 'todo', ?, ?, ?, ?, 0, ?, 'shared', ?, ?)`,
+      [newId('act'), template.title, template.description, template.startDate, template.endDate, username, now.toISOString(), mine ? null : actor.username, template.priority, template.teamId, sharedId, template.seriesId]
     );
+  }
+  // On a repeating shared task the next cycles use the new list of people.
+  if (template.seriesId) {
+    await db.run('UPDATE recurrences SET participants = ? WHERE id = ?', [JSON.stringify(desired), template.seriesId]);
   }
   return {
     ok: true,

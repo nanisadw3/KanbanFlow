@@ -12,7 +12,7 @@ async function makeDb(): Promise<Database> {
     CREATE TABLE teams (id TEXT PRIMARY KEY, memberUsernames TEXT);
     CREATE TABLE comments (id TEXT PRIMARY KEY, username TEXT);
     CREATE TABLE comment_reads (username TEXT, sharedId TEXT);
-    CREATE TABLE recurrences (id TEXT PRIMARY KEY, username TEXT, assignedBy TEXT);
+    CREATE TABLE recurrences (id TEXT PRIMARY KEY, username TEXT, assignedBy TEXT, participants TEXT);
     CREATE TABLE presence (username TEXT PRIMARY KEY);
     INSERT INTO users (username, fullName, role, lastLogin, email) VALUES
       ('Ana','Ana P','user','x','ana@x.com'), ('Beto','Beto R','user','x','beto@x.com'),
@@ -21,7 +21,7 @@ async function makeDb(): Promise<Database> {
     INSERT INTO teams VALUES ('t1', '["Ana","Beto"]'), ('t2', '["Beto"]');
     INSERT INTO comments VALUES ('c1','Ana'), ('c2','Beto');
     INSERT INTO comment_reads VALUES ('Ana','s'), ('Beto','s');
-    INSERT INTO recurrences VALUES ('s1','Ana','Beto'), ('s2','Beto','Ana');
+    INSERT INTO recurrences VALUES ('s1','Ana','Beto',NULL), ('s2','Beto','Ana','["Beto","Ana"]');
     INSERT INTO presence VALUES ('Ana'), ('Beto');
   `);
   return db;
@@ -84,6 +84,7 @@ test('renombrar propaga el nombre a tareas, equipos, comentarios, series y prese
   assert.equal((await db.get("SELECT COUNT(*) n FROM comment_reads WHERE username = 'ana.lopez'")).n, 1); // sus marcas de lectura la siguen
   assert.equal((await db.get("SELECT username FROM recurrences WHERE id = 's1'")).username, 'ana.lopez');
   assert.equal((await db.get("SELECT assignedBy FROM recurrences WHERE id = 's2'")).assignedBy, 'ana.lopez');
+  assert.equal((await db.get("SELECT participants p FROM recurrences WHERE id = 's2'")).p, '["Beto","ana.lopez"]'); // la serie compartida conserva a quién le toca
   assert.equal((await db.get("SELECT COUNT(*) n FROM presence WHERE username = 'Ana'")).n, 0);
   assert.equal((await db.get("SELECT COUNT(*) n FROM presence WHERE username = 'Beto'")).n, 1);
 });

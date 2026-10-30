@@ -12,6 +12,7 @@ import {
   markCommentsRead,
   setSharedParticipants,
   changeTaskKind,
+  setSeriesRule,
   loginUser,
   loginAdmin,
   changeAdminPassword,
@@ -48,9 +49,9 @@ import { todayString, isOverdue as isOverdueOn, daysOverdue, formatShortDate } f
 import { isLive, isDoneVisibleOnBoard as isDoneOnBoard, inArchivero, matchesTab, archiveTabCounts, matchesArchiveView, archiveViewCounts } from './archive';
 import type { ArchiveTab, ArchiveView } from './archive';
 import { buildLoginSummary, type LoginSummary } from './summary';
-import { Icon, IconButton, Avatar, Meta, PriorityFlag, MiniTaskCard, TaskCardBody, TaskDates, FieldLabel, Segmented, Toast } from './ui';
+import { Icon, IconButton, Avatar, Meta, PriorityFlag, MiniTaskCard, TaskCardBody, TaskDates, FieldLabel, Segmented, KindChoice, Toast } from './ui';
 import { REPEAT_OPTIONS, WEEKDAYS, MONTH_NAMES, usesWeekday, dayFor, describeRepeat, kindClass, sharedGroup, sharedProgress, copyProgress, unreadComments } from './taskKinds';
-import type { TaskKind, Repeat, SharedStats } from './taskKinds';
+import type { Repeat, SharedStats } from './taskKinds';
 import { useToast } from './useToast';
 import ExportDialog from './ExportDialog';
 import { fileToAvatarDataUrl } from './imageUtils';
@@ -90,7 +91,9 @@ function App() {
   const [priority, setPriority] = useState<'alta' | 'media' | 'baja'>('media');
   const [progress, setProgress] = useState<number>(50);
   // Kind of task being created/edited: a normal one, one shared with several people, or a repeating one.
-  const [taskType, setTaskType] = useState<TaskKind>('single');
+  // A task's type is two booleans, shared and repeating (neither = individual); the picker shows the four combinations.
+  const [asShared, setAsShared] = useState(false);
+  const [asRepeat, setAsRepeat] = useState(false);
   const [sharedWith, setSharedWith] = useState<Set<string>>(new Set());
   const [repeat, setRepeat] = useState<Repeat>('weekly');
   const [repeatDay, setRepeatDay] = useState(1);     // weekday 1-5, or day of the month
@@ -376,6 +379,12 @@ function App() {
   // The admin dashboard's filter as data (shared with the team panel's matching).
   const taskFilter = { statuses: activeStatusFilters, overdueOnly, users: activeUserFilters };
   const filterActive = isFilterActive(taskFilter);
+
+  // Leaving this board (another team / supervised user / logout) ends the selection.
+  useEffect(() => {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+  }, [viewingTeam?.id, viewingUserAsAdmin?.username, user?.username]);
 
   // Activating a filter collapses the Equipos panel to a matching-teams strip; clearing resets it.
   useEffect(() => {
@@ -1004,7 +1013,8 @@ function App() {
     setStatus('todo');
     setPriority('media');
     setProgress(50);
-    setTaskType('single');
+    setAsShared(false);
+    setAsRepeat(false);
     setRepeat('weekly');
     setRepeatDay(1);
     setRepeatMonth(1);
@@ -1056,7 +1066,12 @@ function App() {
     setPriority(activity.priority);
     setProgress(activity.progress ?? (activity.status === 'done' ? 100 : activity.status === 'doing' ? 50 : 0));
     setTargetAssignee(activity.username);
-    setTaskType(activity.kind ?? 'single');
+    setAsShared(activity.kind === 'shared');
+    setAsRepeat(!!activity.seriesId);
+    // The repeat rule of an existing series is editable too (a task that starts repeating gets the defaults).
+    setRepeat(activity.repeat ?? 'weekly');
+    setRepeatDay(activity.repeatDay ?? 1);
+    setRepeatMonth(activity.repeatMonth ?? 1);
     setSharedWith(new Set(activity.kind === 'shared' ? sharedGroup(activities, activity.sharedId).map(a => a.username) : []));
     setModalError('');
     setCommentText('');
@@ -1067,7 +1082,7 @@ function App() {
     e?.preventDefault();
     // A repeating task has no dates: the day it comes back is its repeat rule.
     if (!title.trim() || !user) return;
-    if (taskType !== 'recurring' && (!startDate || !endDate)) return;
+    if (!asRepeat && (!startDate || !endDate)) return;
 
     const assignee = targetAssignee || user.username;
     // Only note "assigned by" when someone assigns the task to a different
@@ -1078,7 +1093,7 @@ function App() {
 
     // Editing a shared task can also change who is on it. Taking someone off deletes their copy and
     // progress, so that asks for confirmation first.
-    const editingShared = modalMode === 'edit' && selectedActivity?.kind === 'shared' && taskType === 'shared' && !!selectedActivity.sharedId;
+    const editingShared = modalMode === 'edit' && selectedActivity?.kind === 'shared' && asShared && !!selectedActivity.sharedId;
     const people = editingShared ? participantDiff() : { added: [], removed: [] };
     if (editingShared) {
       if (sharedWith.size === 0) {
@@ -1096,7 +1111,7 @@ function App() {
     }
 
     // Leaving "shared" drops everyone else's copy and the comments, so that asks first.
-    const leavingShared = modalMode === 'edit' && selectedActivity?.kind === 'shared' && taskType !== 'shared';
+    const leavingShared = modalMode === 'edit' && selectedActivity?.kind === 'shared' && !asShared;
     if (leavingShared && othersOnShared.length > 0 && !confirmedRemoval) {
       showConfirm(
         'Cambiar el tipo de tarea',
@@ -1106,17 +1121,17 @@ function App() {
       return;
     }
     if (kindChanged && selectedActivity) {
-      if (taskType === 'shared' && sharedWith.size === 0) {
+      if (asShared && sharedWith.size === 0) {
         setModalError('Elige al menos una persona para compartir la tarea.');
         return;
       }
       const res = await changeTaskKind({
-        id: selectedActivity.id, to: taskType, by: user.username,
-        usernames: taskType === 'shared' ? [...sharedWith] : undefined,
-        repeat: taskType === 'recurring' ? repeat : undefined,
-        repeatDay: taskType === 'recurring' ? repeatDay : undefined,
-        repeatMonth: taskType === 'recurring' && repeat === 'yearly' ? repeatMonth : undefined,
-        fields: { title, description, startDate, endDate: taskType === 'recurring' ? '' : endDate, priority },
+        id: selectedActivity.id, shared: asShared, repeating: asRepeat, by: user.username,
+        usernames: asShared ? [...sharedWith] : undefined,
+        repeat: asRepeat ? repeat : undefined,
+        repeatDay: asRepeat ? repeatDay : undefined,
+        repeatMonth: asRepeat && repeat === 'yearly' ? repeatMonth : undefined,
+        fields: { title, description, startDate, endDate: asRepeat ? '' : endDate, priority },
       });
       if (!res.ok) {
         setModalError(
@@ -1127,10 +1142,10 @@ function App() {
         );
         return;
       }
-      showToast(`La tarea ahora es ${taskType === 'shared' ? 'compartida' : taskType === 'recurring' ? 'repetitiva' : 'individual'}.`, true);
+      showToast(`La tarea ahora es ${asShared && asRepeat ? 'una rutina (compartida y repetitiva)' : asShared ? 'compartida' : asRepeat ? 'repetitiva' : 'individual'}.`, true);
     }
 
-    if (modalMode === 'create' && taskType === 'shared') {
+    if (modalMode === 'create' && asShared) {
       const usernames = [...sharedWith].filter(u => assigneeOptions.includes(u));
       if (usernames.length === 0) {
         setModalError('Elige al menos una persona para compartir la tarea.');
@@ -1139,12 +1154,15 @@ function App() {
       const res = await addSharedActivity({
         title, description, startDate, endDate, priority, usernames,
         assignedBy: user.username, teamId: viewingTeam?.id,
+        repeat: asRepeat ? repeat : undefined,
+        repeatDay: asRepeat ? repeatDay : undefined,
+        repeatMonth: asRepeat && repeat === 'yearly' ? repeatMonth : undefined,
       });
       if (!res.ok) {
         setModalError(res.error === 'timeout' ? 'No se pudo conectar con el servidor.' : 'No se pudo crear la tarea compartida.');
         return;
       }
-      showToast(`Tarea compartida con ${usernames.length} ${usernames.length === 1 ? 'persona' : 'personas'}.`, true);
+      showToast(`${asRepeat ? 'Rutina' : 'Tarea compartida'} con ${usernames.length} ${usernames.length === 1 ? 'persona' : 'personas'}.`, true);
       setIsModalOpen(false);
       return;
     }
@@ -1161,9 +1179,9 @@ function App() {
         username: assignee,
         assignedBy,
         teamId: viewingTeam ? viewingTeam.id : undefined,
-        repeat: taskType === 'recurring' ? repeat : undefined,
-        repeatDay: taskType === 'recurring' ? repeatDay : undefined,
-        repeatMonth: taskType === 'recurring' && repeat === 'yearly' ? repeatMonth : undefined,
+        repeat: asRepeat ? repeat : undefined,
+        repeatDay: asRepeat ? repeatDay : undefined,
+        repeatMonth: asRepeat && repeat === 'yearly' ? repeatMonth : undefined,
       });
     } else if (modalMode === 'edit' && selectedActivity) {
       const updatedAct: Activity = {
@@ -1171,15 +1189,31 @@ function App() {
         title,
         description,
         startDate,
-        endDate: taskType === 'recurring' ? '' : endDate,
+        endDate: asRepeat ? '' : endDate,
         status,
         priority,
         progress: calculatedProgress,
         username: assignee,
         // A shared or repeating task keeps whoever created it, whoever edits it.
-        assignedBy: selectedActivity.kind === 'shared' || selectedActivity.kind === 'recurring' ? selectedActivity.assignedBy : assignedBy,
+        assignedBy: selectedActivity.kind === 'shared' || selectedActivity.seriesId ? selectedActivity.assignedBy : assignedBy,
       };
       await updateActivity(updatedAct);
+      // An existing repeating task / rutina: the user can also change WHEN it repeats.
+      const ruleChanged = originalRepeat && asRepeat && !!selectedActivity.seriesId && (
+        repeat !== selectedActivity.repeat || repeatDay !== selectedActivity.repeatDay
+        || (repeat === 'yearly' && repeatMonth !== (selectedActivity.repeatMonth ?? 1))
+      );
+      if (ruleChanged) {
+        const res = await setSeriesRule({
+          id: selectedActivity.id, by: user.username, repeat, repeatDay,
+          repeatMonth: repeat === 'yearly' ? repeatMonth : undefined,
+        });
+        if (!res.ok) {
+          setModalError(res.error === 'timeout' ? 'No se pudo conectar con el servidor.' : res.error === 'forbidden' ? 'Solo quienes participan (o un administrador) pueden cambiar cuándo se repite.' : 'No se pudo cambiar cuándo se repite.');
+          return;
+        }
+        showToast(`Repetición actualizada: ${describeRepeat({ repeat, repeatDay, repeatMonth: repeat === 'yearly' ? repeatMonth : undefined }).label.toLowerCase()}.`, true);
+      }
       if (editingShared && (people.added.length > 0 || people.removed.length > 0)) {
         const res = await setSharedParticipants(selectedActivity.sharedId as string, [...sharedWith], user.username);
         if (!res.ok) {
@@ -1253,12 +1287,14 @@ function App() {
   };
 
   const handleDeleteActivity = (id: string) => {
-    const kind = activities.find(a => a.id === id)?.kind;
+    const target = activities.find(a => a.id === id);
+    const kind = target?.kind;
+    const repeating = !!target?.seriesId;
     showConfirm(
-      kind === 'recurring' ? 'Eliminar tarea repetitiva' : 'Eliminar Actividad',
+      repeating && kind !== 'shared' ? 'Eliminar tarea repetitiva' : 'Eliminar Actividad',
       kind === 'shared'
-        ? 'Esta tarea compartida se quitará solo de este tablero. Las demás personas conservan su copia y los comentarios.'
-        : kind === 'recurring'
+        ? `Esta tarea compartida se quitará solo de este tablero. Las demás personas conservan su copia y los comentarios.${repeating ? ' La serie sigue para ellos (y para ti en los siguientes ciclos); si eres la última persona con esta tarea, deja de repetirse.' : ''}`
+        : repeating
           ? 'Se eliminará esta tarea y la serie dejará de repetirse: no se generarán más. Esta acción no se puede deshacer.'
           : '¿Estás seguro de que quieres eliminar esta actividad?',
       async () => {
@@ -1470,39 +1506,46 @@ function App() {
   };
   // Editing: the type can be changed (the user picked the wrong one). `editingSharedNow` = the task is
   // shared now AND stays shared; converting an individual/repeating task to shared starts a fresh picker.
-  const originalKind = selectedActivity?.kind ?? 'single';
-  const kindChanged = modalMode === 'edit' && !!selectedActivity && taskType !== originalKind;
-  const editingSharedNow = modalMode === 'edit' && originalKind === 'shared' && taskType === 'shared';
-  const choosingRule = modalMode === 'create' || originalKind !== 'recurring' || kindChanged;
-  const othersOnShared = originalKind === 'shared'
+  const originalShared = selectedActivity?.kind === 'shared';
+  const originalRepeat = !!selectedActivity?.seriesId;
+  const kindChanged = modalMode === 'edit' && !!selectedActivity && (asShared !== originalShared || asRepeat !== originalRepeat);
+  const editingSharedNow = modalMode === 'edit' && originalShared && asShared;
+  const othersOnShared = originalShared
     ? currentParticipants.filter(c => c.toLowerCase() !== (selectedActivity?.username ?? '').toLowerCase())
     : [];
-  const kindChangeHint = !kindChanged ? '' : originalKind === 'shared'
-    ? (othersOnShared.length > 0
-        ? `Al guardar se quitará a ${othersOnShared.map(displayNameOf).join(', ')} de la tarea (su copia, su avance y los comentarios se eliminan).`
-        : 'Al guardar la tarea deja de ser compartida y se eliminan sus comentarios.')
-    : originalKind === 'recurring'
-      ? 'Al guardar deja de repetirse; las ya generadas se quedan como tareas normales.'
-      : taskType === 'shared'
-        ? 'Al guardar se agrega a las personas elegidas (reciben la tarea en su tablero y un correo). Tu avance actual se conserva.'
-        : 'Al guardar la tarea se repetirá según lo que elijas; ya no tendrá fecha de fin.';
-  const changeTaskType = (v: TaskKind) => {
-    setTaskType(v);
+  const kindChangeHint = !kindChanged ? '' : `Al guardar: ${[
+    originalShared && !asShared
+      ? (othersOnShared.length > 0
+          ? `se quitará a ${othersOnShared.map(displayNameOf).join(', ')} de la tarea (su copia, su avance y los comentarios se eliminan)`
+          : 'la tarea deja de ser compartida y se eliminan sus comentarios')
+      : '',
+    !originalShared && asShared ? 'se agrega a las personas elegidas (reciben la tarea en su tablero y un correo) y tu avance actual se conserva' : '',
+    originalRepeat && !asRepeat ? 'deja de repetirse (las ya generadas se quedan como tareas sin repetición)' : '',
+    !originalRepeat && asRepeat
+      ? (asShared ? 'se repetirá y cada ciclo se crea de nuevo para todas las personas de la tarea, con avance en 0%' : 'se repetirá según lo que elijas y ya no tendrá fecha de fin')
+      : '',
+  ].filter(Boolean).join('; ')}.`;
+  const toggleShared = (v: boolean) => {
+    setAsShared(v);
     setModalError('');
-    if (modalMode !== 'edit' || !selectedActivity) return;
-    if (v === 'shared') {
-      setSharedWith(new Set(originalKind === 'shared' ? currentParticipants : [selectedActivity.username]));
+    // Becoming shared on an existing task starts a picker that keeps the owner; turning it back on restores the group.
+    if (v && modalMode === 'edit' && selectedActivity) {
+      setSharedWith(new Set(originalShared ? currentParticipants : [selectedActivity.username]));
     }
+  };
+  const toggleRepeat = (v: boolean) => {
+    setAsRepeat(v);
+    setModalError('');
     // A repeating task has no dates; going back to one that does needs them filled in.
-    const today = new Date().toISOString().split('T')[0];
-    if (v !== 'recurring') {
+    if (!v) {
+      const today = new Date().toISOString().split('T')[0];
       if (!startDate) setStartDate(today);
       if (!endDate) setEndDate(today);
     }
   };
   const toggleSharedWith = (username: string) => setSharedWith(prev => {
     // Becoming shared keeps the task's current owner on it.
-    if (modalMode === 'edit' && originalKind !== 'shared' && username.toLowerCase() === selectedActivity?.username.toLowerCase()) return prev;
+    if (modalMode === 'edit' && !originalShared && username.toLowerCase() === selectedActivity?.username.toLowerCase()) return prev;
     const next = new Set(prev);
     if (next.has(username)) next.delete(username); else next.add(username);
     return next;
@@ -2404,24 +2447,27 @@ function App() {
             </div>
 
             <form onSubmit={handleSaveActivity}>
-              {(
-                <div className="form-group">
-                  <FieldLabel icon="category">Tipo de tarea</FieldLabel>
-                  <Segmented
-                    ariaLabel="Tipo de tarea"
-                    value={taskType}
-                    onChange={changeTaskType}
-                    options={[
-                      { value: 'single', label: 'Individual', icon: 'person', color: '--color-primary' },
-                      { value: 'shared', label: 'Compartida', icon: 'groups', color: '--color-shared' },
-                      { value: 'recurring', label: 'Repetitiva', icon: 'event_repeat', color: '--color-recurring' },
-                    ]}
-                  />
-                  {kindChangeHint && <p className="field-hint">{kindChangeHint}</p>}
-                </div>
-              )}
+              <div className="form-group">
+                <FieldLabel icon="category">Tipo de tarea</FieldLabel>
+                <KindChoice
+                  value={asShared && asRepeat ? 'both' : asShared ? 'shared' : asRepeat ? 'recurring' : 'single'}
+                  onChange={(v) => {
+                    const wantShared = v === 'shared' || v === 'both';
+                    const wantRepeat = v === 'recurring' || v === 'both';
+                    if (wantShared !== asShared) toggleShared(wantShared);
+                    if (wantRepeat !== asRepeat) toggleRepeat(wantRepeat);
+                  }}
+                />
+                <p className="field-hint">
+                  {asShared && asRepeat ? 'Rutina (compartida y repetitiva): cada ciclo se crea de nuevo para las mismas personas.'
+                    : asShared ? 'Compartida: cada persona la ve en su tablero con su propio avance.'
+                    : asRepeat ? 'Repetitiva: se regenera sola el día que elijas.'
+                    : 'Individual: una tarea normal, solo para una persona.'}
+                </p>
+                {kindChangeHint && <p className="field-hint field-hint-strong">{kindChangeHint}</p>}
+              </div>
 
-              {taskType === 'shared' && (
+              {asShared && (
                 <div className="form-group">
                   <FieldLabel icon="groups">
                     {modalMode === 'create' || !editingSharedNow ? 'Compartir con' : 'Participantes'} ({sharedWith.size} {sharedWith.size === 1 ? 'persona' : 'personas'})
@@ -2466,7 +2512,7 @@ function App() {
                 </div>
               )}
 
-              {taskType !== 'shared' && !viewingUserAsAdmin && (isAdmin || viewingTeam) && (
+              {!asShared && !viewingUserAsAdmin && (isAdmin || viewingTeam) && (
                 <div className="form-group">
                   <FieldLabel icon="person">Asignar A</FieldLabel>
                   <select
@@ -2506,7 +2552,7 @@ function App() {
                 />
               </div>
 
-              {taskType !== 'recurring' && (
+              {!asRepeat && (
                 <div className="date-row">
                   <div className="form-group">
                     <FieldLabel icon="event">Fecha Inicio</FieldLabel>
@@ -2531,11 +2577,10 @@ function App() {
                 </div>
               )}
 
-              {taskType === 'recurring' && (
+              {asRepeat && (
                 <div className="form-group">
                   <FieldLabel icon="event_repeat">Se repite</FieldLabel>
-                  {choosingRule ? (
-                    <>
+                  <>
                       <select
                         className="form-input"
                         value={repeat}
@@ -2577,16 +2622,14 @@ function App() {
                         </div>
                       )}
                       <p className="field-hint">
-                        {modalMode === 'create' ? 'La primera se crea ahora y las siguientes' : 'Esta tarea sigue como la actual y las siguientes'} se generan solas{repeat === 'monthly' || repeat === 'quarterly' || repeat === 'semiannual' || repeat === 'yearly' ? '; si el mes no tiene ese día, se usa su último día' : ''}. No lleva fecha de inicio ni de fin.
+                        {modalMode === 'create' ? 'La primera se crea ahora y las siguientes' : originalRepeat ? 'Las siguientes' : 'Esta tarea sigue como la actual y las siguientes'} se generan solas{asShared ? ', cada vez para todas las personas elegidas' : ''}{repeat === 'monthly' || repeat === 'quarterly' || repeat === 'semiannual' || repeat === 'yearly' ? '; si el mes no tiene ese día, se usa su último día' : ''}. No lleva fecha de inicio ni de fin.
+                        {modalMode === 'edit' && originalRepeat && ' Si cambias cuándo se repite, las ya creadas no se mueven y la siguiente se cuenta a partir de hoy.'}
                       </p>
-                    </>
-                  ) : (
-                    <p className="field-hint field-hint-strong">{describeRepeat(selectedActivity ?? {}).label}</p>
-                  )}
+                  </>
                 </div>
               )}
 
-              {!(modalMode === 'create' && taskType === 'shared') && (
+              {!(modalMode === 'create' && asShared) && (
               <div className="form-group">
                 <FieldLabel icon="flag_circle">Estado</FieldLabel>
                 <Segmented
@@ -2605,7 +2648,7 @@ function App() {
               </div>
               )}
 
-              {!(modalMode === 'create' && taskType === 'shared') && status === 'doing' && (
+              {!(modalMode === 'create' && asShared) && status === 'doing' && (
                 <div className="form-group animate-fade-in">
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <FieldLabel icon="donut_small">Porcentaje de Avance</FieldLabel>
@@ -2662,13 +2705,13 @@ function App() {
                 {modalMode === 'edit' && selectedActivity && (
                   <IconButton
                     icon="delete"
-                    label={selectedActivity.kind === 'recurring' ? 'Eliminar definitivamente (deja de repetirse)' : selectedActivity.kind === 'shared' ? 'Quitar de este tablero' : 'Eliminar actividad'}
+                    label={selectedActivity.kind === 'shared' ? 'Quitar de este tablero' : selectedActivity.seriesId ? 'Eliminar definitivamente (deja de repetirse)' : 'Eliminar actividad'}
                     variant="danger"
                     onClick={() => handleDeleteActivity(selectedActivity.id)}
                     className="push-left"
                   />
                 )}
-                {modalMode === 'edit' && selectedActivity?.kind === 'recurring' && (
+                {modalMode === 'edit' && !!selectedActivity?.seriesId && (
                   <IconButton icon="event_busy" label="Detener repetición" variant="tonal" onClick={() => handleStopSeries(selectedActivity.id)} />
                 )}
                 <button type="submit" className="btn btn-primary" style={{ width: 'auto', gap: '0.3rem' }}>

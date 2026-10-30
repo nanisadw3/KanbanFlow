@@ -42,6 +42,12 @@
   --color-shared-rgb: 106, 61, 184;
   --color-recurring: #0e6663;
   --color-recurring-rgb: 14, 102, 99;
+  /* A task someone else assigned to you (rose). >= 4.5:1 on the page and the cards. */
+  --color-assigned: #a8185f;
+  --color-assigned-rgb: 168, 24, 95;
+  /* A "rutina": shared AND repeating (olive/lime). >= 4.5:1 on the page and the cards. */
+  --color-routine: #4f6400;
+  --color-routine-rgb: 79, 100, 0;
 
   /* Chart fills — same status hues, validated against each surface (see dataviz skill) */
   --chart-todo: #b45309;
@@ -103,6 +109,10 @@ body.dark-theme {
   --color-shared-rgb: 201, 176, 247;
   --color-recurring: #7fd6cf;
   --color-recurring-rgb: 127, 214, 207;
+  --color-assigned: #f4a6cd;
+  --color-assigned-rgb: 244, 166, 205;
+  --color-routine: #c3e86d;
+  --color-routine-rgb: 195, 232, 109;
 
   --chart-todo: #d97706;
   --chart-doing: #5b7ce8;

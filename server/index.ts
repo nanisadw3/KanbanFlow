@@ -15,7 +15,7 @@ import { validateNewUser, createUser, touchLogin } from './users.ts';
 import { changeUserRole } from './roles.ts';
 import { updateProfile, parsePhoto } from './profile.ts';
 import { createOverdueChecker, localToday, msUntilNextLocalMidnight } from './overdue.ts';
-import { isRepeat, normalizeRule, ensureRecurrenceTable, createSeries, stopSeries, dropSeriesWhere, runRecurrences, repeatLabel } from './recurrence.ts';
+import { isRepeat, normalizeRule, ensureRecurrenceTable, createSeries, stopSeries, changeSeriesRule, dropSeriesWhere, removeUserFromSeries, runRecurrences, repeatLabel } from './recurrence.ts';
 import { changeKind, type KindChangeInput } from './kindChange.ts';
 import { ensureNoticesTable, listActive, publishNotice, endNotice } from './notices.ts';
 import {
@@ -506,10 +506,21 @@ io.on('connection', async (socket) => {
   ) => {
     const reply = ack ?? (() => {});
     const known = (await db.all<{ username: string }[]>('SELECT username FROM users')).map(u => u.username);
-    const valid = validateShared(payload ?? {}, known);
+    // A repeating shared task has no dates of its own (like any repeating task): the first one is
+    // created today, and the series remembers who takes part so every cycle (and any change of
+    // participants) reaches the same group.
+    const rule = isRepeat(payload?.repeat) ? normalizeRule(payload.repeat, payload.repeatDay, payload.repeatMonth) : null;
+    const today = localToday();
+    const valid = validateShared(rule ? { ...payload, startDate: today, endDate: today } : (payload ?? {}), known);
     if (!valid.ok) return reply({ ok: false, error: valid.error });
-    const task = valid.task;
-    const created = await createSharedTask(db, task);
+    const task = rule ? { ...valid.task, startDate: today, endDate: '' } : valid.task;
+    const seriesId = rule
+      ? await createSeries(db, {
+          rule, title: task.title, description: task.description, priority: task.priority, username: task.assignedBy || task.usernames[0],
+          assignedBy: task.assignedBy || null, teamId: task.teamId, startDate: today, participants: task.usernames,
+        })
+      : null;
+    const created = await createSharedTask(db, task, new Date(), seriesId);
     void notifySharedTask(task, task.assignedBy, task.usernames, undefined, { sharedId: created.sharedId }).catch(err => console.error('[Mailer] notifySharedTask falló:', err));
     await broadcastActivities();
     void checkOverdue();
@@ -562,7 +573,7 @@ io.on('connection', async (socket) => {
     if (!result.ok) return reply(result);
     await broadcastActivities();
     await cleanupAfterDelete();
-    if (result.to === 'shared') {
+    if (result.nowShared && !result.wasShared) {
       void notifySharedTask(result.task, result.by, result.all, result.added, { activityId: typeof payload?.id === 'string' ? payload.id : undefined }).catch(err => console.error('[Mailer] notifySharedTask falló:', err));
     }
     void checkOverdue();
@@ -573,6 +584,18 @@ io.on('connection', async (socket) => {
     const row = await db.get<{ seriesId: string | null }>('SELECT seriesId FROM activities WHERE id = ?', [id]);
     if (row?.seriesId) await stopSeries(db, row.seriesId);
     await broadcastActivities();
+  });
+
+  // Changes when a repeating task (or rutina) repeats: frequency + day, from any of its occurrences.
+  socket.on('series:setRule', async (
+    payload: { id?: string; by?: string; repeat?: string; repeatDay?: number; repeatMonth?: number },
+    ack?: (res: { ok: boolean; error?: string }) => void
+  ) => {
+    const reply = ack ?? (() => {});
+    const result = await changeSeriesRule(db, payload ?? {}, localToday());
+    if (!result.ok) return reply(result);
+    await broadcastActivities(); // every occurrence's label ("Cada semana, los lunes") follows the series
+    reply({ ok: true });
   });
 
   socket.on('activity:updateStatus', async ({ id, status, progress }: { id: string; status: Activity['status']; progress?: number }) => {
@@ -654,9 +677,14 @@ io.on('connection', async (socket) => {
   // Deleting a shared task removes only that person's copy. Deleting a repeating task removes it
   // for good: the series stops too, so nothing is regenerated.
   socket.on('activity:delete', async (id: string) => {
-    const row = await db.get<{ seriesId: string | null }>('SELECT seriesId FROM activities WHERE id = ?', [id]);
+    const row = await db.get<{ seriesId: string | null; sharedId: string | null }>('SELECT seriesId, sharedId FROM activities WHERE id = ?', [id]);
     await db.run('DELETE FROM activities WHERE id = ?', [id]);
-    if (row?.seriesId) await stopSeries(db, row.seriesId);
+    if (row?.seriesId) {
+      // Taking your copy off a repeating SHARED task doesn't stop it for the others; the series
+      // only ends when the last copy of the occurrence is gone (or someone stops it explicitly).
+      const left = row.sharedId ? (await db.get<{ n: number }>('SELECT COUNT(*) n FROM activities WHERE sharedId = ?', [row.sharedId]))?.n ?? 0 : 0;
+      if (!row.sharedId || left === 0) await stopSeries(db, row.seriesId);
+    }
     await broadcastActivities();
     await cleanupAfterDelete();
   });
@@ -806,6 +834,7 @@ io.on('connection', async (socket) => {
 
   socket.on('user:delete', async (username: string) => {
     await dropSeriesWhere(db, 'username', username);
+    await removeUserFromSeries(db, username); // a shared series just loses this person
     await db.run('DELETE FROM comment_reads WHERE LOWER(username) = LOWER(?)', [username]);
     await db.run('DELETE FROM users WHERE LOWER(username) = LOWER(?)', [username]);
     await db.run('DELETE FROM activities WHERE LOWER(username) = LOWER(?)', [username]);

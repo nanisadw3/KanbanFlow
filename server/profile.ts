@@ -109,6 +109,14 @@ async function renameUser(db: Database, old: string, next: string): Promise<void
   await db.run('UPDATE recurrences SET username = ? WHERE LOWER(username) = LOWER(?)', [next, old]);
   await db.run('UPDATE recurrences SET assignedBy = ? WHERE LOWER(assignedBy) = LOWER(?)', [next, old]);
   await db.run('DELETE FROM presence WHERE LOWER(username) = LOWER(?)', [old]);
+  // A repeating shared task remembers its participants: they follow the rename too.
+  const series = await db.all<{ id: string; participants: string }[]>('SELECT id, participants FROM recurrences WHERE participants IS NOT NULL');
+  for (const r of series) {
+    const people: string[] = JSON.parse(r.participants || '[]');
+    if (people.some(p => p.toLowerCase() === old.toLowerCase())) {
+      await db.run('UPDATE recurrences SET participants = ? WHERE id = ?', [JSON.stringify(people.map(p => (p.toLowerCase() === old.toLowerCase() ? next : p))), r.id]);
+    }
+  }
   const teams = await db.all<{ id: string; memberUsernames: string }[]>('SELECT id, memberUsernames FROM teams');
   for (const t of teams) {
     const members: string[] = JSON.parse(t.memberUsernames || '[]');

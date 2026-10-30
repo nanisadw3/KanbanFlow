@@ -52,9 +52,19 @@ export function describeRepeat(r: RepeatRule): { label: string; short: string } 
   return day ? { label: `${every}, el día ${day}`, short: `Día ${day}` } : { label: every, short: 'Repetitiva' };
 }
 
-// CSS class that gives a shared or repeating task its own color; nothing for a normal one.
-export const kindClass = (act: { kind?: string }): string =>
-  act.kind === 'shared' ? 'kind-shared' : act.kind === 'recurring' ? 'kind-recurring' : '';
+// A task is repeating when a series generates it (a shared task can be repeating too: kind stays 'shared').
+export const isRepeatingTask = (act: { seriesId?: string | null }): boolean => !!act.seriesId;
+
+// An individual task that someone else assigned (shared and repeating tasks already have their own color).
+export const isAssignedByOther = (act: { kind?: string; assignedBy?: string | null }): boolean =>
+  !!act.assignedBy && (!act.kind || act.kind === 'single');
+
+// CSS class that gives a shared, repeating or assigned task its own color; nothing for a normal one.
+// Shared + repeating is a "rutina" and has its own color ('kind-routine').
+export const kindClass = (act: { kind?: string; seriesId?: string | null; assignedBy?: string | null }): string =>
+  act.kind === 'shared' ? (act.seriesId ? 'kind-routine' : 'kind-shared')
+    : act.kind === 'recurring' ? 'kind-recurring'
+    : isAssignedByOther(act) ? 'kind-assigned' : '';
 
 interface SharedCopy {
   sharedId?: string | null;

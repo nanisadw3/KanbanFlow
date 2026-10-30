@@ -5,7 +5,7 @@ import type { Activity, User } from './db';
 import { subscribeUsers } from './db';
 import { AvatarPhotosContext, buildPersonLookup, useAvatarPerson } from './avatarContext';
 import { daysOverdue, formatShortDate } from './dates';
-import { describeRepeat, kindClass } from './taskKinds';
+import { describeRepeat, kindClass, isAssignedByOther } from './taskKinds';
 import type { SharedStats } from './taskKinds';
 
 // Presentational primitives for the icon-first UI. No business state lives here.
@@ -206,7 +206,7 @@ export function PriorityFlag({ priority }: { priority?: Activity['priority'] }) 
   );
 }
 
-export function Meta({ icon, tip, children, tone }: { icon: string; tip: string; children: ReactNode; tone?: 'danger' | 'shared' | 'recurring' | 'unread' }) {
+export function Meta({ icon, tip, children, tone }: { icon: string; tip: string; children: ReactNode; tone?: 'danger' | 'shared' | 'recurring' | 'unread' | 'assigned' | 'routine' }) {
   return (
     <span className={`meta ${tone ? `meta-${tone}` : ''}`} data-tip={tip}>
       <Icon name={icon} size={14} />
@@ -218,16 +218,67 @@ export function Meta({ icon, tip, children, tone }: { icon: string; tip: string;
 
 // What sets a shared or repeating task apart: its own icon and color. Nothing for a normal task.
 export function KindBadge({ act, sharedStats }: { act: Activity; sharedStats?: SharedStats }) {
-  if (act.kind === 'shared') {
-    const avg = sharedStats?.average;
-    const tip = `Tarea compartida${sharedStats ? ` · ${sharedStats.people} ${sharedStats.people === 1 ? 'persona' : 'personas'}` : ''}${avg != null ? ` · avance del equipo ${avg}%` : ''}`;
-    return <Meta icon="groups" tip={tip} tone="shared">{avg != null ? `${avg}%` : 'Compartida'}</Meta>;
-  }
-  if (act.kind === 'recurring') {
+  const avg = sharedStats?.average;
+  const people = sharedStats ? `${sharedStats.people} ${sharedStats.people === 1 ? 'persona' : 'personas'}` : '';
+  let kindBadge = null;
+  if (act.kind === 'shared' && act.seriesId) {
+    // Shared AND repeating: one badge, the "rutina": team average + the day it comes back.
     const rule = describeRepeat(act);
-    return <Meta icon="event_repeat" tip={`Tarea repetitiva · ${rule.label.toLowerCase()}`} tone="recurring">{rule.short}</Meta>;
+    kindBadge = (
+      <Meta
+        icon="autorenew"
+        tip={`Rutina (compartida y repetitiva) · ${rule.label.toLowerCase()}${people ? ` · ${people}` : ''}${avg != null ? ` · avance del equipo ${avg}%` : ''}`}
+        tone="routine"
+      >
+        {avg != null ? `${avg}% · ` : ''}{rule.short}
+      </Meta>
+    );
+  } else if (act.kind === 'shared') {
+    const tip = `Tarea compartida${people ? ` · ${people}` : ''}${avg != null ? ` · avance del equipo ${avg}%` : ''}`;
+    kindBadge = <Meta icon="groups" tip={tip} tone="shared">{avg != null ? `${avg}%` : 'Compartida'}</Meta>;
+  } else if (act.kind === 'recurring' && act.seriesId) {
+    const rule = describeRepeat(act);
+    kindBadge = <Meta icon="event_repeat" tip={`Tarea repetitiva · ${rule.label.toLowerCase()}`} tone="recurring">{rule.short}</Meta>;
   }
-  return null;
+  // Also for color-blind users: the rose card color comes with an icon.
+  const assigned = isAssignedByOther(act)
+    ? <span className="meta meta-assigned" data-tip={`Asignada por ${act.assignedBy}`} role="img" aria-label={`Asignada por ${act.assignedBy}`}><Icon name="assignment_ind" size={14} /></span>
+    : null;
+  if (!kindBadge && !assigned) return null;
+  return <>{assigned}{kindBadge}</>;
+}
+
+// The task type picker: the four types side by side (individual is always an explicit choice).
+// 'both' (shared + repeating) is the "rutina", with its own color.
+export type KindChoiceValue = 'single' | 'shared' | 'recurring' | 'both';
+export function KindChoice({ value, onChange }: { value: KindChoiceValue; onChange: (v: KindChoiceValue) => void }) {
+  const options: { value: KindChoiceValue; label: string; hint: string; icon: string; color: string }[] = [
+    { value: 'single', label: 'Individual', hint: 'Una persona', icon: 'person', color: '--color-primary' },
+    { value: 'shared', label: 'Compartida', hint: 'Varias personas', icon: 'groups', color: '--color-shared' },
+    { value: 'recurring', label: 'Repetitiva', hint: 'Se regenera sola', icon: 'event_repeat', color: '--color-recurring' },
+    { value: 'both', label: 'Rutina', hint: 'Compartida y repetitiva', icon: 'autorenew', color: '--color-routine' },
+  ];
+  return (
+    <div className="kind-choice" role="radiogroup" aria-label="Tipo de tarea">
+      {options.map(o => (
+        <button
+          key={o.value}
+          type="button"
+          role="radio"
+          aria-checked={value === o.value}
+          className={`kind-choice-option ${value === o.value ? 'is-selected' : ''}`}
+          style={{ ['--seg' as string]: `var(${o.color})`, ['--seg-rgb' as string]: `var(${o.color}-rgb)` }}
+          onClick={() => onChange(o.value)}
+        >
+          <Icon name={o.icon} size={22} />
+          <span className="kind-choice-text">
+            <strong>{o.label}</strong>
+            <small>{o.hint}</small>
+          </span>
+        </button>
+      ))}
+    </div>
+  );
 }
 
 export function TaskDates({ start, end, overdueDays }: { start: string; end: string; overdueDays?: number }) {

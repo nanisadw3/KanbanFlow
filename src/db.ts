@@ -142,6 +142,10 @@ export interface SharedTaskInput {
   usernames: string[];
   assignedBy: string;
   teamId?: string;
+  // A shared task that also repeats: every cycle it is created again for the same people.
+  repeat?: Repeat;
+  repeatDay?: number;
+  repeatMonth?: number;
 }
 
 export const addSharedActivity = (payload: SharedTaskInput): Promise<AuthResult> =>
@@ -160,11 +164,13 @@ export const markCommentsRead = async (username: string, sharedId: string): Prom
 export const setSharedParticipants = (sharedId: string, usernames: string[], by: string): Promise<AuthResult> =>
   emitWithAck('shared:setParticipants', { sharedId, usernames, by });
 
-// Turns a task into another type (individual / shared / repeating) without re-creating it. Leaving
-// "shared" deletes the other people's copies; leaving "repeating" stops the series.
+// Turns a task into another type without re-creating it. A task is two switches, shared and repeating
+// (neither = individual). Leaving "shared" deletes the other people's copies; leaving "repeating"
+// stops the series.
 export interface ChangeKindInput {
   id: string;
-  to: NonNullable<Activity['kind']>;
+  shared: boolean;
+  repeating: boolean;
   by: string;
   usernames?: string[];
   repeat?: Activity['repeat'];
@@ -179,6 +185,10 @@ export const changeTaskKind = (payload: ChangeKindInput): Promise<AuthResult> =>
 export const stopSeries = async (activityId: string): Promise<void> => {
   socket.emit('series:stop', activityId);
 };
+
+// Changes when a repeating task (or rutina) repeats. Occurrences already created keep their dates.
+export const setSeriesRule = (payload: { id: string; by: string; repeat: Repeat; repeatDay?: number; repeatMonth?: number }): Promise<AuthResult> =>
+  emitWithAck('series:setRule', payload);
 
 export const updateActivityStatus = async (id: string, status: Activity['status'], progress?: number): Promise<void> => {
   socket.emit('activity:updateStatus', { id, status, progress });
