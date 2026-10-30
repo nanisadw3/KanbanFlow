@@ -184,6 +184,11 @@ export const updateActivityStatus = async (id: string, status: Activity['status'
   socket.emit('activity:updateStatus', { id, status, progress });
 };
 
+// Archives (or restores) several tasks in one go.
+export const setActivitiesArchived = async (ids: string[], archived: boolean): Promise<void> => {
+  socket.emit('activity:setArchivedMany', { ids, archived });
+};
+
 export const setActivityArchived = async (id: string, archived: boolean): Promise<void> => {
   socket.emit('activity:setArchived', { id, archived });
 };

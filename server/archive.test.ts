@@ -15,21 +15,21 @@ test('isLive: archivadas abiertas salen de las vistas vivas; hechas/canceladas s
   assert.equal(isLive(t('cancelled', { archived: true })), true);
 });
 
-test('isDoneVisibleOnBoard: reciente o sin completedAt; archivada nunca', () => {
-  assert.equal(isDoneVisibleOnBoard(t('done', { completedAt: new Date(now - DAY / 2).toISOString() }), now), true);
-  assert.equal(isDoneVisibleOnBoard(t('done', { completedAt: new Date(now - 2 * DAY).toISOString() }), now), false);
-  assert.equal(isDoneVisibleOnBoard(t('done'), now), true); // datos antiguos sin completedAt
-  assert.equal(isDoneVisibleOnBoard(t('done', { archived: true, completedAt: new Date(now).toISOString() }), now), false);
+test('isDoneVisibleOnBoard: una hecha se queda en el tablero por vieja que sea; solo la archivada sale', () => {
+  assert.equal(isDoneVisibleOnBoard(t('done', { completedAt: new Date(now - DAY / 2).toISOString() })), true);
+  assert.equal(isDoneVisibleOnBoard(t('done', { completedAt: new Date(now - 90 * DAY).toISOString() })), true); // nada se archiva solo
+  assert.equal(isDoneVisibleOnBoard(t('done')), true);
+  assert.equal(isDoneVisibleOnBoard(t('done', { archived: true, completedAt: new Date(now).toISOString() })), false);
 });
 
-test('inArchivero: archivadas de cualquier estado, todas las canceladas y las hechas con más de un día', () => {
-  assert.equal(inArchivero(t('todo', { archived: true }), now), true);
-  assert.equal(inArchivero(t('doing', { archived: true }), now), true);
-  assert.equal(inArchivero(t('cancelled'), now), true);
-  assert.equal(inArchivero(t('done', { completedAt: new Date(now - 2 * DAY).toISOString() }), now), true);
-  assert.equal(inArchivero(t('done', { completedAt: new Date(now - 1000).toISOString() }), now), false);
-  assert.equal(inArchivero(t('todo'), now), false);
-  assert.equal(inArchivero(t('doing'), now), false);
+test('inArchivero: lo archivado (cualquier estado) y las canceladas; una hecha vieja NO', () => {
+  assert.equal(inArchivero(t('todo', { archived: true })), true);
+  assert.equal(inArchivero(t('doing', { archived: true })), true);
+  assert.equal(inArchivero(t('cancelled')), true);
+  assert.equal(inArchivero(t('done', { archived: true })), true);
+  assert.equal(inArchivero(t('done', { completedAt: new Date(now - 90 * DAY).toISOString() })), false);
+  assert.equal(inArchivero(t('todo')), false);
+  assert.equal(inArchivero(t('doing')), false);
 });
 
 test('matchesTab y archiveTabCounts', () => {

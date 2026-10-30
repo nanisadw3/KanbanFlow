@@ -303,6 +303,7 @@ body.dark-theme .btn-primary {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  min-height: 2.6rem; /* "Hecho" has a button next to its title: keep all three headers the same height */
   padding-bottom: 0.75rem;
   border-bottom: 1px solid var(--border-color);
   margin-bottom: 0.5rem;
@@ -3217,3 +3218,27 @@ body.dark-theme .prio-baja {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* "Seleccionar para archivar": a bar above the columns; in selection mode the cards are ticked, not opened. */
+.selection-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.selection-bar .btn { width: auto; white-space: nowrap; gap: 0.4rem; }
+
+.selection-hint {
+  margin-right: auto;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.task-card.is-selectable { cursor: pointer; }
+.task-card.is-selected { outline: 2px solid var(--color-primary); outline-offset: -2px; }
+.select-box { flex: none; color: var(--text-muted); }
+.select-box.is-on { color: var(--color-primary); }

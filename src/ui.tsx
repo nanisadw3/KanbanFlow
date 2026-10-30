@@ -295,7 +295,7 @@ export function Segmented<T extends string>({
 // Body of a board card (title, flags, progress, expandable details, footer). The wrapper
 // <div draggable …> with every drag handler stays in App.tsx.
 export function TaskCardBody({
-  act, today, overdue, showProgress, onArchive, onEdit, ownerOnline, sharedStats,
+  act, today, overdue, showProgress, onArchive, onEdit, ownerOnline, sharedStats, selectMode, selected,
 }: {
   act: Activity;
   today: string;
@@ -305,6 +305,9 @@ export function TaskCardBody({
   onEdit?: () => void;
   ownerOnline?: boolean;
   sharedStats?: SharedStats;
+  // "Seleccionar para archivar": the card shows a checkbox and its edit/archive buttons are hidden.
+  selectMode?: boolean;
+  selected?: boolean;
 }) {
   // A shared task shows the TEAM's progress (the average), in every column, never one person's own.
   const teamProgress = act.kind === 'shared' && sharedStats !== undefined;
@@ -313,8 +316,11 @@ export function TaskCardBody({
     <>
       <div className="task-header" style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', alignItems: 'stretch' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
-          <h4 className="task-title">{act.title}</h4>
-          {!onEdit && <Icon name="edit" size={16} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />}
+          {selectMode && (
+            <Icon name={selected ? 'check_box' : 'check_box_outline_blank'} size={22} className={`select-box ${selected ? 'is-on' : ''}`} />
+          )}
+          <h4 className="task-title" style={selectMode ? { flex: 1 } : undefined}>{act.title}</h4>
+          {!onEdit && !selectMode && <Icon name="edit" size={16} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />}
         </div>
         <div className="task-badges">
           <PriorityFlag priority={act.priority} />

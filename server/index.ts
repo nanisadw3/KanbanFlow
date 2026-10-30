@@ -580,6 +580,15 @@ io.on('connection', async (socket) => {
     void checkOverdue(); // a restored, already-overdue task is notified right away
   });
 
+  // Archive (or restore) several tasks at once: "archivar todo lo hecho" and "seleccionar para archivar".
+  socket.on('activity:setArchivedMany', async ({ ids, archived }: { ids?: unknown; archived?: boolean }) => {
+    const list = Array.isArray(ids) ? ids.filter((i): i is string => typeof i === 'string').slice(0, 1000) : [];
+    if (list.length === 0) return;
+    await db.run(`UPDATE activities SET archived = ? WHERE id IN (${list.map(() => '?').join(',')})`, [archived ? 1 : 0, ...list]);
+    await broadcastActivities();
+    void checkOverdue();
+  });
+
   socket.on('activity:update', async (updatedAct: Activity) => {
     const rawProgress = updatedAct.status === 'done' ? 100 : updatedAct.status === 'doing' ? (typeof updatedAct.progress === 'number' ? updatedAct.progress : 50) : (typeof updatedAct.progress === 'number' ? updatedAct.progress : 0);
     // Raising progress to 100 moves the task to "done" by itself.

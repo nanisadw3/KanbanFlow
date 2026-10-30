@@ -27,6 +27,7 @@ import {
   stopSeries,
   updateActivityStatus,
   setActivityArchived,
+  setActivitiesArchived,
   updateActivity,
   deleteActivity,
   deleteUser,
@@ -106,6 +107,9 @@ function App() {
   const ownTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [targetAssignee, setTargetAssignee] = useState<string>('');  // Admin filter
   const [viewingUserAsAdmin, setViewingUserAsAdmin] = useState<User | null>(null);
+  // "Seleccionar para archivar": while on, the board's cards are ticked instead of opened.
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [archiveView, setArchiveView] = useState<ArchiveView>('active'); // admin: all / not archived / archived
   const [overdueOnly, setOverdueOnly] = useState(false); // admin: also require "overdue"
   const [teamsExpanded, setTeamsExpanded] = useState(false); // Equipos panel: minimized by default, "Todos" expands it
@@ -1189,6 +1193,41 @@ function App() {
     setIsModalOpen(false);
   };
 
+  // "Archivar todo" next to "Hecho": every completed task on this board, after a confirmation.
+  const archiveAllDone = () => {
+    const done = displayedActivities.filter(a => a.status === 'done' && isDoneVisibleOnBoard(a));
+    if (done.length === 0) return;
+    const n = done.length;
+    showConfirm(
+      'Archivar tareas hechas',
+      `Se archivarán ${n} ${n === 1 ? 'tarea hecha' : 'tareas hechas'} de este tablero. Las verás en el Archivero y puedes restaurarlas.`,
+      () => {
+        void setActivitiesArchived(done.map(a => a.id), true);
+        showToast(`${n} ${n === 1 ? 'tarea archivada' : 'tareas archivadas'}.`, true);
+      }
+    );
+  };
+
+  const toggleSelected = (id: string) => setSelectedIds(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  const cancelSelection = () => { setSelectMode(false); setSelectedIds(new Set()); };
+
+  // The same button starts the selection and, pressed again, archives what was ticked.
+  const handleSelectToArchive = () => {
+    if (!selectMode) { setSelectMode(true); return; }
+    // only tasks still on this board count (someone may have changed or removed one meanwhile)
+    const onBoard = new Set(displayedActivities.filter(a => a.status !== 'done' || isDoneVisibleOnBoard(a)).map(a => a.id));
+    const ids = [...selectedIds].filter(id => onBoard.has(id));
+    if (ids.length === 0) { showToast('Marca al menos una tarea para archivar.', false); return; }
+    void setActivitiesArchived(ids, true);
+    showToast(`${ids.length} ${ids.length === 1 ? 'tarea archivada' : 'tareas archivadas'}.`, true);
+    cancelSelection();
+  };
+
   const handleStopSeries = (id: string) => {
     showConfirm(
       'Detener repetición',
@@ -1351,14 +1390,14 @@ function App() {
     ? onlineNow.filter(p => p.context === `team-${viewingTeam.id}` && p.username.toLowerCase() !== user?.username.toLowerCase())
     : [];
 
-  // A completed task stays on the live board for 1 day, then drops off it (it still exists —
-  // see the Archivero). The rule lives in src/archive.ts, shared with the other views.
-  const isDoneVisibleOnBoard = (a: Activity) => isDoneOnBoard(a, now);
+  // A completed task stays in "Hecho" until the USER archives it: nothing is archived by itself. The rule
+  // lives in src/archive.ts, shared with the other views.
+  const isDoneVisibleOnBoard = (a: Activity) => isDoneOnBoard(a);
 
-  // Everything in the Archivero for the current context (personal/team/supervised user),
-  // newest first: anything archived, every cancelled task, and completed tasks older than a day.
+  // Everything in the Archivero for the current context (personal/team/supervised user), newest
+  // first: what the user archived (any status) and every cancelled task.
   const archiveActivities = scopedActivities
-    .filter(a => inArchivero(a, now))
+    .filter(a => inArchivero(a))
     .sort((a, b) => new Date(b.completedAt || b.createdAt).getTime() - new Date(a.completedAt || a.createdAt).getTime());
 
   // Count helper
@@ -2163,6 +2202,21 @@ function App() {
             </div>
           )}
 
+          <div className="selection-bar animate-fade-in">
+            {selectMode && (
+              <span className="selection-hint">
+                Toca las tareas que quieras archivar{selectedIds.size > 0 ? ` · ${selectedIds.size} ${selectedIds.size === 1 ? 'seleccionada' : 'seleccionadas'}` : ''}
+              </span>
+            )}
+            {selectMode && (
+              <button type="button" className="btn btn-secondary" onClick={cancelSelection}>Cancelar</button>
+            )}
+            <button type="button" className={`btn ${selectMode ? 'btn-primary' : 'btn-secondary'}`} onClick={handleSelectToArchive}>
+              <Icon name={selectMode ? 'inventory_2' : 'checklist'} size={18} />
+              {selectMode ? `Archivar seleccionadas${selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}` : 'Seleccionar para archivar'}
+            </button>
+          </div>
+
           <div className="kanban-grid animate-fade-in">
           {/* TO DO Column */}
           <div
@@ -2182,13 +2236,13 @@ function App() {
               {displayedActivities.filter(a => a.status === 'todo').map(act => (
                 <div
                   key={act.id}
-                  className={`task-card border-todo animate-fade-in ${isOverdue(act) ? 'overdue' : ''} ${kindClass(act)}`}
-                  draggable
+                  className={`task-card border-todo animate-fade-in ${isOverdue(act) ? 'overdue' : ''} ${kindClass(act)} ${selectMode ? 'is-selectable' : ''} ${selectedIds.has(act.id) ? 'is-selected' : ''}`}
+                  draggable={!selectMode}
                   onDragStart={(e) => handleDragStart(e, act.id)}
                   onDragEnd={handleDragEnd}
-                  onClick={() => (act.kind === 'shared' ? openCommentsPanel(act) : openEditModal(act))}
+                  onClick={() => (selectMode ? toggleSelected(act.id) : act.kind === 'shared' ? openCommentsPanel(act) : openEditModal(act))}
                 >
-                  <TaskCardBody act={act} today={today} overdue={isOverdue(act)} ownerOnline={isUserOnline(act.username)} sharedStats={statsFor(act)} onEdit={() => openEditModal(act)} onArchive={() => void setActivityArchived(act.id, true)} />
+                  <TaskCardBody act={act} today={today} overdue={isOverdue(act)} ownerOnline={isUserOnline(act.username)} sharedStats={statsFor(act)} onEdit={selectMode ? undefined : () => openEditModal(act)} onArchive={selectMode ? undefined : () => void setActivityArchived(act.id, true)} selectMode={selectMode} selected={selectedIds.has(act.id)} />
                 </div>
               ))}
             </div>
@@ -2212,13 +2266,13 @@ function App() {
               {displayedActivities.filter(a => a.status === 'doing').map(act => (
                 <div
                   key={act.id}
-                  className={`task-card border-doing animate-fade-in ${isOverdue(act) ? 'overdue' : ''} ${kindClass(act)}`}
-                  draggable
+                  className={`task-card border-doing animate-fade-in ${isOverdue(act) ? 'overdue' : ''} ${kindClass(act)} ${selectMode ? 'is-selectable' : ''} ${selectedIds.has(act.id) ? 'is-selected' : ''}`}
+                  draggable={!selectMode}
                   onDragStart={(e) => handleDragStart(e, act.id)}
                   onDragEnd={handleDragEnd}
-                  onClick={() => (act.kind === 'shared' ? openCommentsPanel(act) : openEditModal(act))}
+                  onClick={() => (selectMode ? toggleSelected(act.id) : act.kind === 'shared' ? openCommentsPanel(act) : openEditModal(act))}
                 >
-                  <TaskCardBody act={act} today={today} overdue={isOverdue(act)} showProgress ownerOnline={isUserOnline(act.username)} sharedStats={statsFor(act)} onEdit={() => openEditModal(act)} onArchive={() => void setActivityArchived(act.id, true)} />
+                  <TaskCardBody act={act} today={today} overdue={isOverdue(act)} showProgress ownerOnline={isUserOnline(act.username)} sharedStats={statsFor(act)} onEdit={selectMode ? undefined : () => openEditModal(act)} onArchive={selectMode ? undefined : () => void setActivityArchived(act.id, true)} selectMode={selectMode} selected={selectedIds.has(act.id)} />
                 </div>
               ))}
             </div>
@@ -2234,6 +2288,9 @@ function App() {
             <div className="column-header">
               <span className="column-title" style={{ color: 'var(--color-done)' }}>
                 <Icon name="check_circle" size={20} /> Hecho
+                {getCount('done') > 0 && (
+                  <IconButton icon="inventory_2" label="Archivar todo lo hecho" size={28} onClick={archiveAllDone} />
+                )}
               </span>
               <span className="column-count">{getCount('done')}</span>
             </div>
@@ -2242,13 +2299,13 @@ function App() {
               {displayedActivities.filter(a => a.status === 'done' && isDoneVisibleOnBoard(a)).map(act => (
                 <div
                   key={act.id}
-                  className={`task-card border-done animate-fade-in ${kindClass(act)}`}
-                  draggable
+                  className={`task-card border-done animate-fade-in ${kindClass(act)} ${selectMode ? 'is-selectable' : ''} ${selectedIds.has(act.id) ? 'is-selected' : ''}`}
+                  draggable={!selectMode}
                   onDragStart={(e) => handleDragStart(e, act.id)}
                   onDragEnd={handleDragEnd}
-                  onClick={() => (act.kind === 'shared' ? openCommentsPanel(act) : openEditModal(act))}
+                  onClick={() => (selectMode ? toggleSelected(act.id) : act.kind === 'shared' ? openCommentsPanel(act) : openEditModal(act))}
                 >
-                  <TaskCardBody act={act} today={today} overdue={false} ownerOnline={isUserOnline(act.username)} sharedStats={statsFor(act)} onEdit={() => openEditModal(act)} onArchive={() => void setActivityArchived(act.id, true)} />
+                  <TaskCardBody act={act} today={today} overdue={false} ownerOnline={isUserOnline(act.username)} sharedStats={statsFor(act)} onEdit={selectMode ? undefined : () => openEditModal(act)} onArchive={selectMode ? undefined : () => void setActivityArchived(act.id, true)} selectMode={selectMode} selected={selectedIds.has(act.id)} />
                 </div>
               ))}
             </div>
@@ -2623,7 +2680,7 @@ function App() {
         </div>
       )}
 
-      {/* Archivero: everything archived (any status), every cancelled task, and completed tasks older than a day */}
+      {/* Archivero: what the user archived (any status) and every cancelled task */}
       {isArchiveModalOpen && (() => {
         const counts = archiveTabCounts(archiveActivities);
         const rows = archiveActivities.filter(a => matchesTab(a, archiveTab));
@@ -2637,12 +2694,10 @@ function App() {
         const statusIcon: Record<Activity['status'], string> = { todo: 'assignment', doing: 'schedule', done: 'check_circle', cancelled: 'cancel' };
         const statusColor: Record<Activity['status'], string> = { todo: '--color-todo', doing: '--color-doing', done: '--color-done', cancelled: '--color-danger' };
         const statusName: Record<Activity['status'], string> = { todo: 'Por hacer', doing: 'En curso', done: 'Hecha', cancelled: 'Cancelada' };
-        // Cancelled tasks come back as "Por hacer"; archived ones leave the Archivero with the
-        // status they had; completed tasks that simply aged off are re-completed onto the board.
+        // Cancelled tasks come back as "Por hacer"; archived ones leave the Archivero with the status they had.
         const restore = (a: Activity) => {
           if (a.status === 'cancelled') void updateActivityStatus(a.id, 'todo');
-          else if (a.archived) void setActivityArchived(a.id, false);
-          else void updateActivityStatus(a.id, 'done');
+          else void setActivityArchived(a.id, false);
         };
         return (
           <div className="modal-overlay" onClick={() => setIsArchiveModalOpen(false)}>
