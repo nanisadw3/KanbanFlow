@@ -8,6 +8,7 @@ import path from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { scrypt as scryptCb, randomBytes, timingSafeEqual } from 'crypto';
 import { normalizeEmail } from './email.ts';
+import { ensureNotesTable, addNote, deleteNote, pruneNotes } from './notes.ts';
 import { createMailer, mailerFromConfig, newTaskMessage, sharedTaskMessage, commentMessage, maintenanceMessage, announcementMessage, testMessage, type Mailer } from './mailer.ts';
 import { ensureSettingsTable, getSetting, setSetting, resolveMailConfig, saveMailConfig, publicMailSettings } from './settings.ts';
 import { autoCompleteAtFull } from './autocomplete.ts';
@@ -218,6 +219,7 @@ async function initSQLite() {
   await ensureRecurrenceTable(db);
   await ensureCommentsTable(db);
   await ensureCommentReadsTable(db);
+  await ensureNotesTable(db);
 
   await ensureSettingsTable(db);
   await ensureNoticesTable(db);
@@ -335,6 +337,10 @@ async function getComments() {
   return await db.all('SELECT id, sharedId, username, text, createdAt FROM comments ORDER BY createdAt');
 }
 
+async function getNotes() {
+  return await db.all('SELECT id, activityId, username, text, createdAt FROM task_notes ORDER BY createdAt');
+}
+
 async function getCommentReads() {
   return await db.all('SELECT username, sharedId, lastReadAt FROM comment_reads');
 }
@@ -351,7 +357,9 @@ async function broadcastComments() {
 // Deleting tasks may leave a shared task's comments with no copy to hang from.
 async function cleanupAfterDelete() {
   await pruneComments(db);
+  await pruneNotes(db);
   await broadcastComments();
+  io.emit('notes:all', await getNotes());
 }
 
 async function broadcastUsers() {
@@ -451,6 +459,7 @@ io.on('connection', async (socket) => {
   socket.emit('teams:all', await getTeams());
   socket.emit('presence:all', await getPresence());
   socket.emit('comments:all', await getComments());
+  socket.emit('notes:all', await getNotes());
   socket.emit('commentReads:all', await getCommentReads());
   socket.emit('notices:all', await listActive(db));
 
@@ -539,6 +548,18 @@ io.on('connection', async (socket) => {
       void notifyComment(String(payload.sharedId), String(payload.username), String(payload.text)).catch(err => console.error('[Mailer] notifyComment falló:', err));
     }
     reply(result);
+  });
+
+  // Timeline notes on individual / repeating tasks (see server/notes.ts).
+  socket.on('note:add', async (payload: { activityId?: string; username?: string; text?: string }, ack?: (res: { ok: boolean; error?: string }) => void) => {
+    const result = await addNote(db, payload ?? {});
+    if (result.ok) io.emit('notes:all', await getNotes());
+    (ack ?? (() => {}))(result);
+  });
+  socket.on('note:delete', async (payload: { id?: string; username?: string }, ack?: (res: { ok: boolean; error?: string }) => void) => {
+    const result = await deleteNote(db, payload ?? {});
+    if (result.ok) io.emit('notes:all', await getNotes());
+    (ack ?? (() => {}))(result);
   });
 
   // Opening a shared task's comments marks them read for that person (drives the "new comments" badge).

@@ -1,3 +1,4 @@
+import { ensureNotesTable, renameNoteAuthor } from './notes.ts';
 import type { Database } from 'sqlite';
 import { normalizeEmail } from './email.ts';
 import { ROLE_MANAGER } from './roles.ts';
@@ -106,6 +107,8 @@ async function renameUser(db: Database, old: string, next: string): Promise<void
   await db.run('UPDATE activities SET assignedBy = ? WHERE LOWER(assignedBy) = LOWER(?)', [next, old]);
   await db.run('UPDATE comments SET username = ? WHERE LOWER(username) = LOWER(?)', [next, old]);
   await db.run('UPDATE comment_reads SET username = ? WHERE LOWER(username) = LOWER(?)', [next, old]);
+  await ensureNotesTable(db);
+  await renameNoteAuthor(db, old, next);
   await db.run('UPDATE recurrences SET username = ? WHERE LOWER(username) = LOWER(?)', [next, old]);
   await db.run('UPDATE recurrences SET assignedBy = ? WHERE LOWER(assignedBy) = LOWER(?)', [next, old]);
   await db.run('DELETE FROM presence WHERE LOWER(username) = LOWER(?)', [old]);
