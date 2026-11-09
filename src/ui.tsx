@@ -416,12 +416,14 @@ export function TaskCardBody({
         )}
       </div>
       <div className="task-expand">
-        <p className="task-desc">{act.description || 'Sin descripción.'}</p>
-        {act.assignedBy && (
-          <div className="task-assigned-by">
-            <Icon name="star" size={12} /> Asignada por {act.assignedBy}
-          </div>
-        )}
+        <div className="task-expand-inner">
+          <p className="task-desc">{act.description || 'Sin descripción.'}</p>
+          {act.assignedBy && (
+            <div className="task-assigned-by">
+              <Icon name="star" size={12} /> Asignada por {act.assignedBy}
+            </div>
+          )}
+        </div>
       </div>
       <div className="task-footer">
         <div className="task-dates">
