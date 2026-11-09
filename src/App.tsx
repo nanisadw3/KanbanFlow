@@ -19,6 +19,7 @@ import {
   loginUser,
   loginAdmin,
   changeAdminPassword,
+  setPasswordForUser,
   createUserByAdmin,
   setUserRole,
   setUserEmail,
@@ -149,6 +150,8 @@ function App() {
   const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
   const [passwordFormError, setPasswordFormError] = useState('');
   const [passwordFormSuccess, setPasswordFormSuccess] = useState(false);
+  // Whose password the dialog changes: '' = my own; only Inaki can pick another account.
+  const [passwordTarget, setPasswordTarget] = useState('');
   const [createUserError, setCreateUserError] = useState('');
   // Shown right after logging in: tasks assigned since the previous login + overdue ones.
   const [loginSummary, setLoginSummary] = useState<{ name: string; summary: LoginSummary } | null>(null);
@@ -831,6 +834,7 @@ function App() {
     setConfirmPasswordInput('');
     setPasswordFormError('');
     setPasswordFormSuccess(false);
+    setPasswordTarget('');
     setIsPasswordModalOpen(true);
   };
 
@@ -846,6 +850,24 @@ function App() {
       return;
     }
     if (!user) return;
+    // Another account's password (Inaki only): he confirms with HIS password, the server checks it all.
+    if (passwordTarget) {
+      const other = await setPasswordForUser({ adminUsername: user.username, adminPassword: currentPasswordInput, username: passwordTarget, newPassword: newPasswordInput });
+      if (!other.ok) {
+        setPasswordFormError(
+          other.error === 'timeout' ? 'No se pudo conectar con el servidor.'
+          : other.error === 'too_short' ? 'La nueva contraseña debe tener al menos 4 caracteres.'
+          : other.error === 'forbidden' ? 'Solo Iñaki puede cambiar la contraseña de otras cuentas.'
+          : other.error === 'not_found' ? 'Esa cuenta ya no existe.'
+          : other.error === 'not_supported' ? 'Esa cuenta no usa contraseña.'
+          : 'Tu contraseña es incorrecta.'
+        );
+        return;
+      }
+      setPasswordFormSuccess(true);
+      setTimeout(() => setIsPasswordModalOpen(false), 1200);
+      return;
+    }
     const res = await changeAdminPassword(user.username, currentPasswordInput, newPasswordInput);
     if (!res.ok) {
       setPasswordFormError(
@@ -1991,13 +2013,13 @@ function App() {
           )}
           {isPower && !viewingTeam && !viewingUserAsAdmin && (
             <>
-              <IconButton icon="key" label="Cambiar mi contraseña" onClick={openPasswordModal} />
+              <IconButton icon="key" label="Cambiar contraseña" onClick={openPasswordModal} />
               <IconButton icon="download" label="Exportar a Excel" onClick={() => setIsExportOpen(true)} />
             </>
           )}
           {isAdmin && !viewingTeam && (
             <>
-              <IconButton icon="key" label="Cambiar mi contraseña" onClick={openPasswordModal} />
+              <IconButton icon="key" label="Cambiar contraseña" onClick={openPasswordModal} />
               <IconButton icon="forward_to_inbox" label="Correo de avisos" onClick={() => void openMailModal()} />
               <IconButton icon="person_add" label="Nuevo usuario" onClick={openCreateUserModal} />
               {user.username.toLowerCase() === 'inaki' && (
@@ -3358,7 +3380,7 @@ function App() {
             <div className="modal-header">
               <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <span className="material-symbols-rounded" style={{ color: 'var(--color-primary)' }}>key</span>
-                Cambiar mi contraseña
+                Cambiar contraseña
               </h3>
               <button type="button" className="modal-close" onClick={() => setIsPasswordModalOpen(false)} aria-label="Cerrar">
                 <span className="material-symbols-rounded">close</span>
@@ -3366,8 +3388,26 @@ function App() {
             </div>
 
             <form onSubmit={handleChangePassword} style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {/* Only Inaki can choose another account (an admin or power user: the ones that have a password) */}
+              {user?.username.toLowerCase() === 'inaki' && (
+                <div className="form-group">
+                  <FieldLabel icon="manage_accounts">Cuenta</FieldLabel>
+                  <select
+                    className="form-input"
+                    value={passwordTarget}
+                    onChange={(e) => { setPasswordTarget(e.target.value); setPasswordFormError(''); }}
+                  >
+                    <option value="">Mi contraseña</option>
+                    {users
+                      .filter(u => u.username.toLowerCase() !== user.username.toLowerCase() && (roleUsesPassword(u.role) || u.username.toLowerCase() === 'admin'))
+                      .map(u => (
+                        <option key={u.username} value={u.username}>{(u.fullName || u.username)} · {ROLE_LABELS[roleOf(u.username)]}</option>
+                      ))}
+                  </select>
+                </div>
+              )}
               <div className="form-group">
-                <FieldLabel icon="lock">Contraseña actual</FieldLabel>
+                <FieldLabel icon="lock">{passwordTarget ? 'Tu contraseña (para confirmar)' : 'Contraseña actual'}</FieldLabel>
                 <input
                   type="password"
                   className="form-input"
@@ -3404,7 +3444,9 @@ function App() {
 
               {passwordFormError && <p className="form-error" style={{ margin: '0' }}>{passwordFormError}</p>}
               {passwordFormSuccess && (
-                <p style={{ margin: 0, color: 'var(--color-done)', fontSize: '0.85rem', fontWeight: 600 }}>Contraseña actualizada.</p>
+                <p style={{ margin: 0, color: 'var(--color-done)', fontSize: '0.85rem', fontWeight: 600 }}>
+                  {passwordTarget ? `Contraseña de ${users.find(u => u.username === passwordTarget)?.fullName || passwordTarget} actualizada.` : 'Contraseña actualizada.'}
+                </p>
               )}
 
               <div className="modal-footer">

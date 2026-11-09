@@ -15,6 +15,7 @@ import { ensureSettingsTable, getSetting, setSetting, resolveMailConfig, saveMai
 import { autoCompleteAtFull } from './autocomplete.ts';
 import { validateNewUser, createUser, touchLogin } from './users.ts';
 import { changeUserRole, roleNeedsPassword } from './roles.ts';
+import { setPasswordFor } from './passwords.ts';
 import { updateProfile, parsePhoto } from './profile.ts';
 import { createOverdueChecker, localToday, msUntilNextLocalMidnight } from './overdue.ts';
 import { isRepeat, normalizeRule, ensureRecurrenceTable, createSeries, stopSeries, changeSeriesRule, dropSeriesWhere, removeUserFromSeries, runRecurrences, repeatLabel } from './recurrence.ts';
@@ -964,6 +965,19 @@ io.on('connection', async (socket) => {
     );
     if (result.ok) await broadcastUsers();
     reply(result);
+  });
+
+  // Setting ANOTHER account's password: only the role manager (Inaki). He proves his own password, then names
+  // the account (an admin or power user) and the new password (see server/passwords.ts).
+  socket.on('auth:setPassword', async (
+    payload: { adminUsername?: string; adminPassword?: string; username?: string; newPassword?: string },
+    ack?: (res: object) => void
+  ) => {
+    const reply = ack ?? (() => {});
+    const admin = await checkAdmin(payload?.adminUsername, payload?.adminPassword);
+    if (!admin) return reply(await failAuth('bad_password'));
+    failedAuthAttempts = 0;
+    reply(await setPasswordFor(db, { manager: admin.username, username: payload.username, newPassword: payload.newPassword }, { minPasswordLength: MIN_PASSWORD_LENGTH, hashPassword }));
   });
 
   // Announcements (banner for everyone). Any administrator can publish a normal one (it expires on its

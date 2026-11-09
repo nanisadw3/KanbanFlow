@@ -259,6 +259,10 @@ const emitWithAck = (event: string, payload: object): Promise<AuthResult> =>
 export const loginAdmin = (username: string, password: string): Promise<AuthResult> =>
   emitWithAck('auth:login', { username, password });
 
+// Setting ANOTHER account's password (an admin or power user): only Inaki, who proves his own password first.
+export const setPasswordForUser = (payload: { adminUsername: string; adminPassword: string; username: string; newPassword: string }): Promise<AuthResult> =>
+  emitWithAck('auth:setPassword', payload);
+
 export const changeAdminPassword = (username: string, currentPassword: string, newPassword: string): Promise<AuthResult> =>
   emitWithAck('auth:changePassword', { username, currentPassword, newPassword });
 
