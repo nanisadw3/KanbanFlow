@@ -8,6 +8,7 @@ import path from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { scrypt as scryptCb, randomBytes, timingSafeEqual } from 'crypto';
 import { normalizeEmail } from './email.ts';
+import { updateTeam } from './teams.ts';
 import { ensureNotesTable, addNote, deleteNote, pruneNotes } from './notes.ts';
 import { createMailer, mailerFromConfig, newTaskMessage, sharedTaskMessage, commentMessage, maintenanceMessage, announcementMessage, testMessage, type Mailer } from './mailer.ts';
 import { ensureSettingsTable, getSetting, setSetting, resolveMailConfig, saveMailConfig, publicMailSettings } from './settings.ts';
@@ -1007,6 +1008,16 @@ io.on('connection', async (socket) => {
       [id, name, JSON.stringify(memberUsernames), createdAt]
     );
     await broadcastTeams();
+  });
+
+  // Edits a team's name and members (admin only, see server/teams.ts).
+  socket.on('team:update', async (
+    payload: { teamId?: string; name?: string; memberUsernames?: string[]; by?: string },
+    ack?: (res: { ok: boolean; error?: string; removed?: string[]; added?: string[] }) => void
+  ) => {
+    const result = await updateTeam(db, payload ?? {});
+    if (result.ok) await broadcastTeams();
+    (ack ?? (() => {}))(result);
   });
 
   socket.on('team:delete', async (teamId: string) => {
