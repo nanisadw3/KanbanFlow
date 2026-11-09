@@ -65,6 +65,10 @@ import StatsPage from './StatsPage';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const isEmailValid = (v: string) => EMAIL_RE.test(v.trim());
 
+// Who has a Kanban board of their own: everyone but the built-in admin and the VIEWERS (a viewer has no
+// e-mail and no board; it only looks at the activity map).
+const hasBoard = (u: { username: string; role?: string }) => u.username.toLowerCase() !== 'admin' && u.role !== 'viewer';
+
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [usernameInput, setUsernameInput] = useState('');
@@ -464,6 +468,10 @@ function App() {
   }, []);
 
   const toggleTheme = () => {
+    // Every colour eases over for a moment instead of snapping (class styled in index.css).
+    const root = document.documentElement;
+    root.classList.add('theme-transition');
+    window.setTimeout(() => root.classList.remove('theme-transition'), 600);
     setTheme(prev => prev === 'dark' ? 'light' : 'dark');
   };
 
@@ -704,7 +712,7 @@ function App() {
     const name = profName.trim();
     const wanted = profUsername.trim();
     if (!name) return setProfError('Escribe tu nombre.');
-    if (!isEmailValid(profEmail)) return setProfError('Escribe un correo electrónico válido.');
+    if (!isViewer && !isEmailValid(profEmail)) return setProfError('Escribe un correo electrónico válido.');
     if (!usernameLocked && !/^[\p{L}\p{N}._-]{1,32}$/u.test(wanted)) {
       return setProfError('El usuario solo puede tener letras, números, punto, guion y guion bajo (máx. 32).');
     }
@@ -715,7 +723,7 @@ function App() {
       username: user.username,
       password: isAdmin ? profPassword : undefined,
       fullName: name,
-      email: profEmail.trim(),
+      ...(isViewer ? {} : { email: profEmail.trim() }),
       ...(usernameLocked ? {} : { newUsername: wanted }),
       ...(profPhoto !== undefined ? { photo: profPhoto } : {}),
     });
@@ -869,7 +877,7 @@ function App() {
       return;
     }
 
-    if (!isEmailValid(newUserEmail)) {
+    if (newUserRole !== 'viewer' && !isEmailValid(newUserEmail)) {
       setCreateUserError('Escribe un correo electrónico válido.');
       return;
     }
@@ -882,7 +890,7 @@ function App() {
     if (!user) return;
     const res = await createUserByAdmin({
       adminUsername: user.username, adminPassword: newUserAdminPassword,
-      username: cleanUsername, fullName: cleanFullName, role: newUserRole, email: newUserEmail.trim(),
+      username: cleanUsername, fullName: cleanFullName, role: newUserRole, email: newUserRole === 'viewer' ? '' : newUserEmail.trim(),
       password: roleUsesPassword(newUserRole) ? newUserPassword : undefined,
     });
     if (!res.ok) {
@@ -1538,10 +1546,10 @@ function App() {
   const canSupervise = isAdmin || isPower;
   isViewerRef.current = isViewer;
 
-  // Every user must have an email (it's where task notices are sent). Whoever is
+  // Every user must have an email (it's where task notices are sent), except viewers. Whoever is
   // logged in without one gets a blocking dialog; an admin can also edit others'.
   const currentUserRecord = user ? users.find(u => u.username.toLowerCase() === user.username.toLowerCase()) : undefined;
-  const mustSetOwnEmail = !!currentUserRecord && !currentUserRecord.email;
+  const mustSetOwnEmail = !!currentUserRecord && !currentUserRecord.email && currentUserRecord.role !== 'viewer';
   // What the header shows for the logged-in person (an administrator too): their own name and photo.
   const myName = currentUserRecord?.fullName || user?.fullName || user?.username || '';
   const myPhoto = currentUserRecord ? avatarUrl(currentUserRecord) : undefined;
@@ -1700,7 +1708,7 @@ function App() {
 
   // Who a task can be assigned to / shared with: the team's members on a team board, otherwise
   // everyone except the built-in admin account.
-  const assigneeOptions = viewingTeam ? viewingTeam.memberUsernames : users.filter(u => u.username.toLowerCase() !== 'admin').map(u => u.username);
+  const assigneeOptions = viewingTeam ? viewingTeam.memberUsernames : users.filter(hasBoard).map(u => u.username);
   // What a mini card in the admin map can show on hover: a shared task's chat or an individual / repeating
   // task's timeline notes, newest first.
   const notesFor = (act: Activity): MiniNote[] => {
@@ -1942,9 +1950,10 @@ function App() {
       {/* Top Navbar */}
       <div className="glass-panel board-header animate-fade-in">
         <div className="user-badge">
-          {(viewingTeam || viewingUserAsAdmin) && (
+          <div className={`back-slot ${viewingTeam || viewingUserAsAdmin ? 'is-open' : ''}`} aria-hidden={!(viewingTeam || viewingUserAsAdmin)}>
             <IconButton icon="arrow_back" label={canSupervise ? 'Volver al panel general' : 'Volver a mi tablero'} variant="tonal" onClick={() => { handleSelectUser(null); handleSelectTeam(null); }} />
-          )}
+          </div>
+          <div className="user-badge-main header-swap" key={viewingTeam?.id ?? viewingUserAsAdmin?.username ?? 'own'}>
           {viewingTeam || viewingUserAsAdmin ? (
             <div className="user-avatar"><span className="material-symbols-rounded">{viewingTeam ? 'groups' : 'visibility'}</span></div>
           ) : (
@@ -1955,6 +1964,7 @@ function App() {
           <div className="user-info">
             <h3>{viewingTeam ? viewingTeam.name : viewingUserAsAdmin ? displayNameOf(viewingUserAsAdmin.username) : myName}</h3>
             <p>{viewingTeam ? `Equipo · ${viewingTeam.memberUsernames.length} miembros` : viewingUserAsAdmin ? 'Supervisando su tablero personal' : (isAdmin ? 'Panel de Control General' : isPower ? 'Panel de Control' : isViewer ? 'Mapa de Actividades · solo lectura' : 'Tablero Personal')}</p>
+          </div>
           </div>
         </div>
 
@@ -2011,17 +2021,6 @@ function App() {
         </div>
       </div>
 
-      {!seesPanel && !viewingTeam && myTeams.length > 0 && (
-        <div className="my-teams-row animate-fade-in">
-          <span className="my-teams-label" data-tip="Mis equipos" role="img" aria-label="Mis equipos"><Icon name="groups" size={20} /></span>
-          {myTeams.map(t => (
-            <button key={t.id} type="button" className="team-pill" onClick={() => handleSelectTeam(t)}>
-              <span className="material-symbols-rounded" style={{ fontSize: '16px' }}>groups</span> {t.name}
-            </button>
-          ))}
-        </div>
-      )}
-
       {/* Main Panel */}
       {seesPanel && !viewingUserAsAdmin && !viewingTeam ? (
         <div className="admin-dashboard animate-fade-in">
@@ -2055,7 +2054,7 @@ function App() {
                 <span className="material-symbols-rounded" style={{ fontSize: '26px' }}>group</span>
               </div>
               <div className="stat-info">
-                <span className="stat-value">{users.filter(u => u.username.toLowerCase() !== 'admin').length}</span>
+                <span className="stat-value">{users.filter(hasBoard).length}</span>
                 <span className="stat-label">
                   Usuarios
                   {activeUserFilters.size > 0 && ` · ${activeUserFilters.size} activo${activeUserFilters.size > 1 ? 's' : ''}`}
@@ -2131,7 +2130,7 @@ function App() {
           </div>
 
           {isUsersPanelOpen && (() => {
-            const nonAdminUsers = users.filter(u => u.username.toLowerCase() !== 'admin');
+            const nonAdminUsers = users.filter(hasBoard);
             const query = userSearchQuery.trim().toLowerCase();
             const filteredUsers = query
               ? nonAdminUsers.filter(u => (u.fullName || u.username).toLowerCase().includes(query) || u.username.toLowerCase().includes(query))
@@ -2338,7 +2337,7 @@ function App() {
 
             {/* Detailed row-by-row view of user activities */}
             {users
-              .filter(u => u.username.toLowerCase() !== 'admin' && isUserShown(u.username))
+              .filter(u => hasBoard(u) && isUserShown(u.username))
               .map(u => ({ u, overdueTotal: activities.filter(a => a.username.toLowerCase() === u.username.toLowerCase() && !a.teamId && matchesArchiveView(a, archiveView) && isOverdue(a)).length }))
               .sort((a, b) => b.overdueTotal - a.overdueTotal) // people with late tasks first (stable otherwise)
               .map(({ u, overdueTotal }) => {
@@ -2451,9 +2450,19 @@ function App() {
         </div>
       ) : (
         /* Regular Kanban Board Workspace, Admin Supervising Board, or Team Board */
-        <div>
+        <div key={viewingTeam?.id ?? viewingUserAsAdmin?.username ?? 'own'}>
           <div className="selection-bar animate-fade-in">
             <div className="selection-bar-left">
+              {!seesPanel && !viewingTeam && myTeams.length > 0 && (
+                <div className="my-teams-row">
+                  <span className="my-teams-label" data-tip="Mis equipos" role="img" aria-label="Mis equipos"><Icon name="groups" size={20} /></span>
+                  {myTeams.map(t => (
+                    <button key={t.id} type="button" className="team-pill" onClick={() => handleSelectTeam(t)}>
+                      <span className="material-symbols-rounded" style={{ fontSize: '16px' }}>groups</span> {t.name}
+                    </button>
+                  ))}
+                </div>
+              )}
               {boardViewers.length > 0 && (
                 <div className="live-pill" role="status">
                   <AvatarStack members={boardViewers.map(p => ({ name: p.username, online: true }))} max={4} size={26} tipPrefix={`Viendo ${thisBoard} ahora`} />
@@ -2464,18 +2473,19 @@ function App() {
                   </span>
                 </div>
               )}
-              {selectMode && (
-                <span className="selection-hint">
-                  Toca las tareas que quieras archivar{selectedIds.size > 0 ? ` · ${selectedIds.size} ${selectedIds.size === 1 ? 'seleccionada' : 'seleccionadas'}` : ''}
-                </span>
-              )}
+              {/* Always mounted so it can fade in and out with the mode */}
+              <span className={`selection-hint ${selectMode ? 'is-open' : ''}`} aria-hidden={!selectMode}>
+                Toca las tareas que quieras archivar{selectedIds.size > 0 ? ` · ${selectedIds.size} ${selectedIds.size === 1 ? 'seleccionada' : 'seleccionadas'}` : ''}
+              </span>
             </div>
-            {selectMode && (
+            <div className={`cancel-slot ${selectMode ? 'is-open' : ''}`} aria-hidden={!selectMode}>
               <button type="button" className="btn btn-secondary" onClick={cancelSelection}>Cancelar</button>
-            )}
+            </div>
             <button type="button" className={`btn ${selectMode ? 'btn-primary' : 'btn-secondary'}`} onClick={handleSelectToArchive}>
-              <Icon name={selectMode ? 'inventory_2' : 'checklist'} size={18} />
-              {selectMode ? `Archivar seleccionadas${selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}` : 'Seleccionar para archivar'}
+              <span className="select-btn-label" key={selectMode ? 'on' : 'off'}>
+                <Icon name={selectMode ? 'inventory_2' : 'checklist'} size={18} />
+                {selectMode ? `Archivar seleccionadas${selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}` : 'Seleccionar para archivar'}
+              </span>
             </button>
           </div>
 
@@ -3127,7 +3137,7 @@ function App() {
               <div className="form-group">
                 <FieldLabel icon="group">Miembros ({teamMemberSelection.size} seleccionados)</FieldLabel>
                 {(() => {
-                  const nonAdminUsers = users.filter(u => u.username.toLowerCase() !== 'admin');
+                  const nonAdminUsers = users.filter(hasBoard);
                   const query = teamMemberSearch.trim().toLowerCase();
                   const filteredUsers = query ? nonAdminUsers.filter(u => u.username.toLowerCase().includes(query)) : nonAdminUsers;
                   return (
@@ -3271,17 +3281,19 @@ function App() {
                 />
               </div>
 
-              <div className="form-group">
-                <FieldLabel icon="mail">Correo electrónico</FieldLabel>
-                <input
-                  type="email"
-                  className="form-input"
-                  placeholder="Ej. carlos@empresa.com"
-                  value={newUserEmail}
-                  onChange={(e) => setNewUserEmail(e.target.value)}
-                  required
-                />
-              </div>
+              {newUserRole !== 'viewer' && (
+                <div className="form-group">
+                  <FieldLabel icon="mail">Correo electrónico</FieldLabel>
+                  <input
+                    type="email"
+                    className="form-input"
+                    placeholder="Ej. carlos@empresa.com"
+                    value={newUserEmail}
+                    onChange={(e) => setNewUserEmail(e.target.value)}
+                    required
+                  />
+                </div>
+              )}
 
               <div className="form-group">
                 <FieldLabel icon="shield_person">Tipo de Usuario</FieldLabel>
@@ -3292,7 +3304,7 @@ function App() {
                 >
                   <option value="user">Normal user</option>
                   <option value="power">Power user (tareas sin administración)</option>
-                  <option value="viewer">Visor (solo el mapa, sin contraseña)</option>
+                  <option value="viewer">Visor (solo el mapa, sin correo ni tablero)</option>
                   <option value="admin">Usuario Administrador</option>
                 </select>
               </div>
@@ -3730,10 +3742,12 @@ function App() {
                   </p>
                 </div>
 
-                <div className="form-group">
-                  <FieldLabel icon="mail">Correo electrónico</FieldLabel>
-                  <input type="email" className="form-input" value={profEmail} onChange={(e) => setProfEmail(e.target.value)} required />
-                </div>
+                {!isViewer && (
+                  <div className="form-group">
+                    <FieldLabel icon="mail">Correo electrónico</FieldLabel>
+                    <input type="email" className="form-input" value={profEmail} onChange={(e) => setProfEmail(e.target.value)} required />
+                  </div>
+                )}
 
                 {isAdmin && (
                   <div className="form-group">

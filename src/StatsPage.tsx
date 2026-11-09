@@ -79,7 +79,7 @@ function StatsPage({ onBack }: { onBack: () => void }) {
   useEffect(() => {
     const unsubActivities = subscribeActivities(setActivities);
     const unsubUsers = subscribeUsers(users => {
-      setUsersList(users.filter(u => u.username.toLowerCase() !== 'admin'));
+      setUsersList(users.filter(u => u.username.toLowerCase() !== 'admin' && u.role !== 'viewer'));
     });
     const unsubTeams = subscribeTeams(setTeams);
     return () => {

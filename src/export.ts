@@ -73,7 +73,7 @@ export function safeSheetName(name: string, used: Set<string>, reserved: string[
 export function buildExportData(input: { activities: Activity[]; users: User[]; teams: Team[]; today: string; includeArchived?: boolean }): ExportData {
   const { activities, users, teams, today, includeArchived = false } = input;
   const people = users
-    .filter(u => u.username.toLowerCase() !== 'admin')
+    .filter(u => u.username.toLowerCase() !== 'admin' && u.role !== 'viewer') // a viewer has no board
     .map(u => ({ username: u.username, userName: u.fullName || u.username, email: u.email || '' }))
     .sort((a, b) => a.userName.localeCompare(b.userName, 'es'));
   const teamName = (id?: string | null) => (id ? teams.find(t => t.id === id)?.name || 'Equipo' : 'Personal');
