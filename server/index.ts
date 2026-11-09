@@ -12,7 +12,7 @@ import { createMailer, mailerFromConfig, newTaskMessage, sharedTaskMessage, comm
 import { ensureSettingsTable, getSetting, setSetting, resolveMailConfig, saveMailConfig, publicMailSettings } from './settings.ts';
 import { autoCompleteAtFull } from './autocomplete.ts';
 import { validateNewUser, createUser, touchLogin } from './users.ts';
-import { changeUserRole } from './roles.ts';
+import { changeUserRole, roleNeedsPassword } from './roles.ts';
 import { updateProfile, parsePhoto } from './profile.ts';
 import { createOverdueChecker, localToday, msUntilNextLocalMidnight } from './overdue.ts';
 import { isRepeat, normalizeRule, ensureRecurrenceTable, createSeries, stopSeries, changeSeriesRule, dropSeriesWhere, removeUserFromSeries, runRecurrences, repeatLabel } from './recurrence.ts';
@@ -372,7 +372,8 @@ async function notifyNewTask(task: Activity, repeatText?: string) {
   const assigner = await db.get<{ username: string; fullName: string | null; role: string | null }>(
     'SELECT username, fullName, role FROM users WHERE username = ? COLLATE NOCASE', [task.assignedBy]
   );
-  if (!assigner || !isAdminRow(assigner)) return;
+  // a task assigned by staff (an admin or a power user) emails the assignee
+  if (!assigner || !(isAdminRow(assigner) || assigner.role === 'power')) return;
   if (assigner.username.toLowerCase() === task.username.toLowerCase()) return;
   const assignee = await db.get<{ email: string | null; fullName: string | null; username: string }>(
     'SELECT email, fullName, username FROM users WHERE username = ? COLLATE NOCASE', [task.username]
@@ -724,8 +725,8 @@ io.on('connection', async (socket) => {
     const row = await db.get<{ username: string; role: string | null; passwordHash: string | null }>(
       'SELECT username, role, passwordHash FROM users WHERE username = ? COLLATE NOCASE', [username]
     );
-    if (!row || !isAdminRow(row)) return reply(await failAuth('bad_password'));
-    if (!row.passwordHash) return reply(await failAuth('bad_password'));
+    // admin and power user sign in with a password (the rest of the admin-gated actions still use checkAdmin)
+    if (!row || !(isAdminRow(row) || roleNeedsPassword(row.role)) || !row.passwordHash) return reply(await failAuth('bad_password'));
     if (!(await verifyPassword(password, row.passwordHash))) return reply(await failAuth('bad_password'));
     failedAuthAttempts = 0;
     reply({ ok: true });
@@ -742,7 +743,7 @@ io.on('connection', async (socket) => {
     const row = await db.get<{ username: string; role: string | null; passwordHash: string | null }>(
       'SELECT username, role, passwordHash FROM users WHERE username = ? COLLATE NOCASE', [username]
     );
-    if (!row || !isAdminRow(row) || !row.passwordHash) return reply(await failAuth('bad_password'));
+    if (!row || !(isAdminRow(row) || roleNeedsPassword(row.role)) || !row.passwordHash) return reply(await failAuth('bad_password'));
     if (!(await verifyPassword(currentPassword, row.passwordHash))) return reply(await failAuth('bad_password'));
     if (newPassword.length < MIN_PASSWORD_LENGTH) return reply({ ok: false, error: 'too_short' });
     await db.run('UPDATE users SET passwordHash = ? WHERE username = ?', [await hashPassword(newPassword), row.username]);
@@ -782,7 +783,7 @@ io.on('connection', async (socket) => {
     const valid = validateNewUser(payload, MIN_PASSWORD_LENGTH);
     if (!valid.ok) return reply({ ok: false, error: valid.error });
     const u = valid.user;
-    const passwordHash = u.role === 'admin' ? await hashPassword(u.password) : null;
+    const passwordHash = roleNeedsPassword(u.role) ? await hashPassword(u.password) : null;
     const created = await createUser(db, { username: u.username, fullName: u.fullName, role: u.role, email: u.email, passwordHash });
     if (!created.ok) return reply({ ok: false, error: created.error });
     await broadcastUsers();

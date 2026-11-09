@@ -56,3 +56,15 @@ test('touchLogin actualiza último acceso, completa nombre y correo vacíos sin 
   const beto = await db.get("SELECT fullName, email FROM users WHERE username='Beto'");
   assert.equal(beto.fullName, 'Beto Original'); assert.equal(beto.email, 'beto@x.com');
 });
+
+test('validateNewUser: power user y admin piden contraseña, el visor no; un rol desconocido es usuario', () => {
+  const base = { username: 'luis', fullName: 'Luis A', email: 'luis@x.com' };
+  assert.deepEqual(validateNewUser({ ...base, role: 'power' }, 4), { ok: false, error: 'too_short' });
+  const power = validateNewUser({ ...base, role: 'power', password: 'clave1' }, 4);
+  assert.ok(power.ok && power.user.role === 'power');
+  const viewer = validateNewUser({ ...base, role: 'viewer', password: '' }, 4);
+  assert.ok(viewer.ok && viewer.user.role === 'viewer');
+  const odd = validateNewUser({ ...base, role: 'superjefe' }, 4);
+  assert.ok(odd.ok && odd.user.role === 'user');
+  assert.deepEqual(validateNewUser({ ...base, role: 'admin', password: 'abc' }, 4), { ok: false, error: 'too_short' });
+});

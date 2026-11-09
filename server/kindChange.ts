@@ -1,4 +1,5 @@
 import type { Database } from 'sqlite';
+import { isStaff } from './roles.ts';
 import { createSeries, isRepeat, normalizeRule, stopSeries } from './recurrence.ts';
 
 // Changing a task's type after it was created (the user picked the wrong one). A task is two
@@ -61,13 +62,13 @@ export async function changeKind(
 
   const actor = await db.get<{ username: string; role: string | null }>('SELECT username, role FROM users WHERE username = ? COLLATE NOCASE', [typeof input.by === 'string' ? input.by : '']);
   if (!actor) return { ok: false, error: 'forbidden' };
-  const isAdmin = actor.role === 'admin' || actor.username.toLowerCase() === 'admin';
+  const staff = isStaff(actor);
 
   const copies = fromShared
     ? await db.all<{ id: string; username: string }[]>('SELECT id, username FROM activities WHERE sharedId = ?', [row.sharedId])
     : [];
-  // Changing a shared task is only for someone who is on it, or an admin.
-  if (fromShared && !isAdmin && !copies.some(c => c.username.toLowerCase() === actor.username.toLowerCase())) {
+  // Changing a shared task is only for someone who is on it, or staff (admin / power user).
+  if (fromShared && !staff && !copies.some(c => c.username.toLowerCase() === actor.username.toLowerCase())) {
     return { ok: false, error: 'forbidden' };
   }
 

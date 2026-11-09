@@ -13,12 +13,27 @@ export type RoleChangeError =
   | 'too_short'
   | 'password_required';
 
-export type RoleChangeResult = { ok: true; role: 'admin' | 'user' } | { ok: false; error: RoleChangeError };
+// 'power' sees the whole admin panel but changes nothing; 'viewer' only sees the activity map. A power
+// user signs in with a password, like an admin; a viewer, like a regular user, with just the username.
+// Neither is an admin to the server, so every admin-gated action (users, passwords, mail, notices,
+// teams, roles) already refuses them.
+export const ROLES = ['admin', 'power', 'viewer', 'user'] as const;
+export type Role = (typeof ROLES)[number];
+// Staff = admin or power user: they may work on ANY task (create and assign, comment, edit, move,
+// archive). Only admins do the technical side (users, passwords, mail, notices, roles, teams).
+export const isStaff = (row: { username: string; role: string | null | undefined }): boolean =>
+  row.role === 'admin' || row.role === 'power' || row.username.toLowerCase() === 'admin';
+
+// Roles that sign in with a password.
+export const roleNeedsPassword = (role: unknown): boolean => role === 'admin' || role === 'power';
+
+export type RoleChangeResult = { ok: true; role: Role } | { ok: false; error: RoleChangeError };
 
 // Called after the caller has already proven (with their own password) to be an admin.
-//  - Promoting someone needs a password for them: the server hands any admin without one the
-//    default password, so letting a promotion through without one would leave an open account.
-//  - Demoting clears the password hash, so a later promotion starts clean.
+//  - Giving someone a role that signs in with a password (admin, power user) needs a password for them:
+//    the server hands any admin without one the default password, so letting it through without one
+//    would leave an open account (and a power user with no password could not sign in at all).
+//  - Any move to a non-admin role (user, power, viewer) clears the password hash, so a later promotion starts clean.
 //  - The built-in "admin" account and the manager's own role can't be changed.
 export async function changeUserRole(
   db: Database,
@@ -26,8 +41,8 @@ export async function changeUserRole(
   opts: { minPasswordLength: number; hashPassword: (password: string) => Promise<string> }
 ): Promise<RoleChangeResult> {
   if (input.manager.toLowerCase() !== ROLE_MANAGER) return { ok: false, error: 'forbidden' };
-  if (input.role !== 'admin' && input.role !== 'user') return { ok: false, error: 'invalid_role' };
-  const role = input.role;
+  const role = ROLES.find(r => r === input.role);
+  if (!role) return { ok: false, error: 'invalid_role' };
 
   const target = await db.get<{ username: string; role: string | null; passwordHash: string | null }>(
     'SELECT username, role, passwordHash FROM users WHERE username = ? COLLATE NOCASE',
@@ -37,9 +52,9 @@ export async function changeUserRole(
   if (target.username.toLowerCase() === 'admin') return { ok: false, error: 'protected' };
   if (target.username.toLowerCase() === input.manager.toLowerCase()) return { ok: false, error: 'self' };
 
-  if (role === 'admin') {
-    // Already an admin: nothing to do, and a password sent along must not reset theirs.
-    if (target.role === 'admin') return { ok: true, role };
+  if (roleNeedsPassword(role)) {
+    // Already has this role with a password: nothing to do, and a password sent along must not reset theirs.
+    if (target.role === role && target.passwordHash) return { ok: true, role };
     const password = typeof input.password === 'string' ? input.password : '';
     if (password.length < opts.minPasswordLength) {
       return { ok: false, error: password === '' ? 'password_required' : 'too_short' };

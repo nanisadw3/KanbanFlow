@@ -1,5 +1,6 @@
 import type { Database } from 'sqlite';
 import { normalizeEmail } from './email.ts';
+import { ROLES, roleNeedsPassword, type Role } from './roles.ts';
 
 export interface NewUserInput {
   username?: unknown;
@@ -12,7 +13,7 @@ export interface NewUserInput {
 export interface ValidNewUser {
   username: string;
   fullName: string;
-  role: 'admin' | 'user';
+  role: Role;
   email: string;
   password: string;
 }
@@ -28,9 +29,10 @@ export function validateNewUser(input: NewUserInput, minPasswordLength: number):
   if (!fullName) return { ok: false, error: 'invalid_name' };
   const email = normalizeEmail(input.email);
   if (!email) return { ok: false, error: 'invalid_email' };
-  const role = input.role === 'admin' ? 'admin' : 'user';
+  // An unknown role falls back to a regular user. Admin and power user sign in with a password; viewer doesn't.
+  const role: Role = ROLES.find(r => r === input.role) ?? 'user';
   const password = typeof input.password === 'string' ? input.password : '';
-  if (role === 'admin' && password.length < minPasswordLength) return { ok: false, error: 'too_short' };
+  if (roleNeedsPassword(role) && password.length < minPasswordLength) return { ok: false, error: 'too_short' };
   return { ok: true, user: { username, fullName, role, email, password } };
 }
 
@@ -38,7 +40,7 @@ export function validateNewUser(input: NewUserInput, minPasswordLength: number):
 // user (usernames are case-insensitive), so it can't be used to alter someone's role.
 export async function createUser(
   db: Database,
-  u: { username: string; fullName: string; role: 'admin' | 'user'; email: string; passwordHash: string | null }
+  u: { username: string; fullName: string; role: Role; email: string; passwordHash: string | null }
 ): Promise<{ ok: true } | { ok: false; error: 'exists' }> {
   const existing = await db.get('SELECT username FROM users WHERE username = ? COLLATE NOCASE', [u.username]);
   if (existing) return { ok: false, error: 'exists' };

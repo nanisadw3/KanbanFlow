@@ -16,7 +16,8 @@ async function makeDb(): Promise<Database> {
       teamId TEXT, completedAt TEXT, archived INTEGER DEFAULT 0, overdueNotifiedAt TEXT,
       kind TEXT NOT NULL DEFAULT 'single', sharedId TEXT, seriesId TEXT);
     INSERT INTO users VALUES ('Ana','Ana P','user','x','ana@x.com'), ('Beto','Beto R','user','x','beto@x.com'),
-      ('Luis','Luis A','admin','x','luis@x.com'), ('Eva','Eva Z','user','x','eva@x.com');
+      ('Luis','Luis A','admin','x','luis@x.com'), ('Eva','Eva Z','user','x','eva@x.com'),
+      ('Pia','Pia Q','power','x','pia@x.com'), ('Vic','Vic W','viewer','x','vic@x.com');
   `);
   await db.exec('CREATE TABLE teams (id TEXT PRIMARY KEY, name TEXT, memberUsernames TEXT, createdAt TEXT);');
   await ensureCommentsTable(db);
@@ -237,4 +238,14 @@ test('setParticipants en una tarea de equipo solo admite miembros del equipo', a
   const res = await setParticipants(db, { sharedId, usernames: ['Ana', 'Beto', 'Eva'], by: 'Ana' });
   assert.ok(res.ok);
   if (res.ok) assert.deepEqual(res.added, ['Beto']); // Eva no es del equipo
+});
+
+test('un power user comenta en una tarea compartida sin ser participante; un visor no', async () => {
+  const db = await makeDb();
+  const made = await createSharedTask(db, { title: 'Informe', description: '', startDate: '2026-10-05', endDate: '2026-10-09', priority: 'media', usernames: ['Ana', 'Beto'], assignedBy: 'Luis' } as never);
+  const sharedId = (await db.get<{ sharedId: string }>('SELECT sharedId FROM activities WHERE sharedId IS NOT NULL LIMIT 1'))!.sharedId;
+  assert.ok(made);
+  assert.deepEqual(await addComment(db, { sharedId, username: 'Pia', text: 'Vamos bien' }), { ok: true });
+  assert.deepEqual(await addComment(db, { sharedId, username: 'Vic', text: 'x' }), { ok: false, error: 'forbidden' });
+  assert.deepEqual(await addComment(db, { sharedId, username: 'Eva', text: 'x' }), { ok: false, error: 'forbidden' });
 });

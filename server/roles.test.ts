@@ -75,3 +75,33 @@ test('el usuario se busca sin distinguir mayúsculas', async () => {
   assert.deepEqual(await change(db, { username: 'aNa' }), { ok: true, role: 'admin' });
   assert.equal((await row(db, 'Ana'))!.role, 'admin');
 });
+
+test('power user: necesita contraseña (como el admin); el visor no', async () => {
+  const db = await makeDb();
+  assert.deepEqual(await change(db, { role: 'power', password: undefined }), { ok: false, error: 'password_required' });
+  assert.deepEqual(await change(db, { role: 'power', password: 'abc' }), { ok: false, error: 'too_short' });
+  assert.deepEqual(await row(db, 'Ana'), { role: 'user', passwordHash: null });
+  assert.deepEqual(await change(db, { role: 'power', password: 'clave1' }), { ok: true, role: 'power' });
+  assert.deepEqual(await row(db, 'Ana'), { role: 'power', passwordHash: 'hash(clave1)' });
+  // the viewer signs in with just the username: no password asked, and any old one is dropped
+  assert.deepEqual(await change(db, { role: 'viewer', password: undefined }), { ok: true, role: 'viewer' });
+  assert.deepEqual(await row(db, 'Ana'), { role: 'viewer', passwordHash: null });
+});
+
+test('guardar de nuevo el rol power no le cambia la contraseña; si no tenía una, sí se la pone', async () => {
+  const db = await makeDb();
+  await change(db, { role: 'power', password: 'clave1' });
+  assert.deepEqual(await change(db, { role: 'power', password: 'otra123' }), { ok: true, role: 'power' });
+  assert.deepEqual(await row(db, 'Ana'), { role: 'power', passwordHash: 'hash(clave1)' });
+  await db.run("UPDATE users SET passwordHash = NULL WHERE username = 'Ana'");
+  assert.deepEqual(await change(db, { role: 'power', password: 'nueva99' }), { ok: true, role: 'power' });
+  assert.deepEqual(await row(db, 'Ana'), { role: 'power', passwordHash: 'hash(nueva99)' });
+});
+
+test('pasar un administrador a power user pide una contraseña nueva; rol inválido se rechaza', async () => {
+  const db = await makeDb();
+  assert.deepEqual(await change(db, { username: 'Roberto', role: 'power', password: undefined }), { ok: false, error: 'password_required' });
+  assert.deepEqual(await change(db, { username: 'Roberto', role: 'power', password: 'clave1' }), { ok: true, role: 'power' });
+  assert.deepEqual(await row(db, 'Roberto'), { role: 'power', passwordHash: 'hash(clave1)' });
+  assert.deepEqual(await change(db, { username: 'Ana', role: 'superjefe' }), { ok: false, error: 'invalid_role' });
+});

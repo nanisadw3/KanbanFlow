@@ -1,4 +1,5 @@
 import type { Database } from 'sqlite';
+import { isStaff } from './roles.ts';
 import { createSharedTask } from './shared.ts';
 
 // Repeating tasks. A series is one row in `recurrences` (the template and the rule) plus one
@@ -193,8 +194,8 @@ export async function changeSeriesRule(
   const series = await db.get<{ participants: string | null }>('SELECT participants FROM recurrences WHERE id = ?', [row.seriesId]);
   if (!series) return { ok: false, error: 'no_series' };
   const people = parseParticipants(series.participants);
-  const isAdmin = actor.role === 'admin' || actor.username.toLowerCase() === 'admin';
-  if (people && !isAdmin && !people.some(p => p.toLowerCase() === actor.username.toLowerCase())) return { ok: false, error: 'forbidden' };
+  const staff = isStaff(actor);
+  if (people && !staff && !people.some(p => p.toLowerCase() === actor.username.toLowerCase())) return { ok: false, error: 'forbidden' };
 
   const rule = normalizeRule(input.repeat, input.repeatDay, input.repeatMonth);
   await db.run('UPDATE recurrences SET repeat = ?, day = ?, month = ?, lastDate = ? WHERE id = ?', [rule.repeat, rule.day, rule.month, today, row.seriesId]);

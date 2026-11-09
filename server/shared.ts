@@ -1,4 +1,5 @@
 import type { Database } from 'sqlite';
+import { isStaff } from './roles.ts';
 
 // Shared tasks: ONE row per participant (so it lands on each person's board with their own status
 // and progress), all linked by `sharedId`. Comments hang from the same `sharedId`.
@@ -178,7 +179,7 @@ export async function commentRecipients(
   return out;
 }
 
-// Only someone who has a copy of the task (or an admin) can comment on it.
+// Only someone who has a copy of the task (or staff: an admin or a power user) can comment on it.
 export async function addComment(
   db: Database,
   input: { sharedId?: unknown; username?: unknown; text?: unknown },
@@ -193,8 +194,8 @@ export async function addComment(
   if (!author) return { ok: false, error: 'not_found' };
   const copies = await db.all<{ username: string }[]>('SELECT username FROM activities WHERE sharedId = ?', [sharedId]);
   if (copies.length === 0) return { ok: false, error: 'not_found' };
-  const isAdmin = author.role === 'admin' || author.username.toLowerCase() === 'admin';
-  if (!isAdmin && !copies.some(c => c.username.toLowerCase() === author.username.toLowerCase())) return { ok: false, error: 'forbidden' };
+  const staff = isStaff(author);
+  if (!staff && !copies.some(c => c.username.toLowerCase() === author.username.toLowerCase())) return { ok: false, error: 'forbidden' };
   await db.run('INSERT INTO comments (id, sharedId, username, text, createdAt) VALUES (?, ?, ?, ?, ?)', [newId('cmt'), sharedId, author.username, text, now.toISOString()]);
   return { ok: true };
 }
@@ -234,7 +235,7 @@ export function sharedRecipients(
 export type ParticipantsError = 'not_found' | 'no_participants' | 'forbidden';
 
 // Adds a copy for each new person (todo, 0%) and deletes the copy of each person taken off. Someone
-// removed loses their copy and progress; the comments stay. Only a participant or an admin may do it,
+// removed loses their copy and progress; the comments stay. Only a participant or staff (admin / power user) may do it,
 // and on a team task only team members can be on it.
 export async function setParticipants(
   db: Database,
@@ -251,8 +252,8 @@ export async function setParticipants(
   if (copies.length === 0) return { ok: false, error: 'not_found' };
 
   const actor = await db.get<{ username: string; role: string | null }>('SELECT username, role FROM users WHERE username = ? COLLATE NOCASE', [typeof input.by === 'string' ? input.by : '']);
-  const isAdmin = !!actor && (actor.role === 'admin' || actor.username.toLowerCase() === 'admin');
-  if (!actor || (!isAdmin && !copies.some(c => c.username.toLowerCase() === actor.username.toLowerCase()))) return { ok: false, error: 'forbidden' };
+  const staff = !!actor && isStaff(actor);
+  if (!actor || (!staff && !copies.some(c => c.username.toLowerCase() === actor.username.toLowerCase()))) return { ok: false, error: 'forbidden' };
 
   const template = copies[0];
   let known = (await db.all<{ username: string }[]>('SELECT username FROM users')).map(u => u.username);
