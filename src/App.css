@@ -222,6 +222,8 @@ body.dark-theme .btn-primary {
 /* Header UI */
 .board-header {
   display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 2rem;
@@ -1180,26 +1182,6 @@ body.dark-theme .btn-primary {
 }
 
 /* Supervision banner */
-.supervision-banner {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 1.2rem 2rem;
-  margin-bottom: 2rem;
-  border: 1.5px solid var(--color-accent);
-  border-radius: 16px;
-  background: rgba(var(--color-accent-rgb), 0.06);
-}
-
-.supervision-banner-text {
-  font-weight: 600;
-  color: var(--color-accent);
-  font-size: 1rem;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
 /* Priority Badges */
 .priority-badge {
   display: inline-flex;
@@ -1499,25 +1481,6 @@ body.dark-theme .prio-baja {
 
 .online-now-avatars {
   display: flex;
-}
-
-.team-live-viewers {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  margin: -1rem 0 1.5rem;
-  padding: 0.7rem 1.1rem;
-  border-radius: 12px;
-  background: rgba(var(--color-done-rgb), 0.08);
-  border: 1px solid rgba(var(--color-done-rgb), 0.25);
-  font-size: 0.85rem;
-  color: var(--text-muted);
-  flex-wrap: wrap;
-}
-
-.team-live-viewers-names {
-  font-weight: 600;
-  color: var(--text-main);
 }
 
 /* Trash zone — appears out of nowhere as a floating bar at the bottom of
@@ -2806,10 +2769,11 @@ body.dark-theme .prio-baja {
   overflow-y: auto;
 }
 
-/* Role manager: two radio buttons side by side */
+/* Role manager: one option per row, each with a short explanation */
 .role-radio-group {
   display: flex;
-  gap: 0.75rem;
+  flex-direction: column;
+  gap: 0.5rem;
   margin: 0;
   padding: 0;
   border: 0;
@@ -2848,7 +2812,11 @@ body.dark-theme .prio-baja {
 .role-radio input {
   accent-color: var(--color-primary);
   margin: 0;
+  flex: none;
 }
+
+.role-radio-text { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+.role-radio-text small { font-size: 0.78rem; line-height: 1.3; color: var(--text-muted); }
 
 
 /* ───────── Task kinds: shared (violet) and repeating (teal) ───────── */
@@ -3294,8 +3262,15 @@ body.dark-theme .prio-baja {
 
 .selection-bar .btn { width: auto; white-space: nowrap; gap: 0.4rem; }
 
+.selection-bar-left { display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem 0.9rem; margin-right: auto; min-width: 0; }
+
+/* Who else is on this team board right now */
+.live-pill { display: inline-flex; align-items: center; gap: 0.6rem; padding: 0.3rem 0.9rem 0.3rem 0.35rem; border-radius: 999px; background: rgba(var(--color-done-rgb), 0.1); border: 1px solid rgba(var(--color-done-rgb), 0.28); font-size: 0.82rem; font-weight: 600; color: var(--text-main); }
+.live-pill-text { display: inline-flex; align-items: center; gap: 0.45rem; }
+.live-pill-text::before { content: ''; width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--color-done); box-shadow: 0 0 0 3px rgba(var(--color-done-rgb), 0.25); animation: onlinePulse 2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .live-pill-text::before { animation: none; } }
+
 .selection-hint {
-  margin-right: auto;
   font-size: 0.85rem;
   font-weight: 600;
   color: var(--text-muted);
@@ -3305,3 +3280,43 @@ body.dark-theme .prio-baja {
 .task-card.is-selected { outline: 2px solid var(--color-primary); outline-offset: -2px; }
 .select-box { flex: none; color: var(--text-muted); }
 .select-box.is-on { color: var(--color-primary); }
+
+/* Timeline of notes on an individual / repeating task */
+.timeline-compose { align-items: flex-end; margin-bottom: 0.25rem; }
+.timeline { list-style: none; margin: 1rem 0 0; padding: 0.25rem 0.4rem 0 0; max-height: 320px; overflow-y: auto; }
+.timeline-day { position: relative; padding: 0 0 1.1rem 1.7rem; }
+.timeline-day:last-child { padding-bottom: 0.2rem; }
+/* the rail joins one day's dot to the next */
+.timeline-day::before { content: ''; position: absolute; left: 6px; top: 1.2rem; bottom: -0.2rem; width: 2px; border-radius: 2px; background: color-mix(in srgb, var(--timeline-color, var(--color-primary)) 35%, transparent); }
+.timeline-day:last-child::before { display: none; }
+.timeline-day::after { content: ''; position: absolute; left: 0; top: 0.2rem; width: 14px; height: 14px; border-radius: 50%; background: var(--timeline-color, var(--color-primary)); box-shadow: 0 0 0 4px color-mix(in srgb, var(--timeline-color, var(--color-primary)) 22%, transparent); }
+.timeline-day-label { display: inline-block; margin: 0 0 0.55rem; font-size: 0.78rem; font-weight: 700; letter-spacing: 0.02em; color: var(--color-secondary); }
+.timeline-day-label::first-letter { text-transform: uppercase; }
+.timeline-day ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.timeline-note { background: rgba(var(--overlay-rgb), 0.06); border: 1px solid rgba(var(--overlay-rgb), 0.08); border-radius: 10px; padding: 0.55rem 0.75rem 0.65rem; }
+.timeline-note-head { display: flex; align-items: center; gap: 0.45rem; font-size: 0.8rem; min-width: 0; }
+.timeline-note-head strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.timeline-note-head time { color: var(--color-secondary); margin-right: auto; white-space: nowrap; }
+.timeline-note p { margin: 0.35rem 0 0; font-size: 0.92rem; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
+.timeline-created { margin: 0; display: flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; color: var(--color-secondary); }
+
+/* Admin map: a card with notes/comments shows a count and, on hover, a bubble with the latest ones */
+.mini-notes-badge { gap: 0.2rem; color: var(--color-primary); }
+.admin-mini-card.has-notes { cursor: default; }
+.admin-mini-card.has-notes:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.notes-bubble { position: fixed; z-index: 3100; max-height: 60vh; overflow: hidden; padding: 0.65rem 0.75rem; border-radius: 12px; background: linear-gradient(var(--bg-card), var(--bg-card)), var(--bg-main); border: 1px solid var(--border-color); box-shadow: var(--shadow-md); color: var(--text-main); font-size: 0.8rem; pointer-events: none; animation: tipIn 0.16s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.notes-bubble-title { display: flex; align-items: center; gap: 0.35rem; margin-bottom: 0.5rem; font-weight: 700; color: var(--color-primary); }
+.notes-bubble ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.55rem; }
+.notes-bubble li { padding-left: 0.6rem; border-left: 2px solid var(--border-color); }
+.notes-bubble-head { display: flex; justify-content: space-between; gap: 0.5rem; font-size: 0.72rem; }
+.notes-bubble-head strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notes-bubble-head time { color: var(--color-secondary); white-space: nowrap; }
+.notes-bubble p { margin: 0.15rem 0 0; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.notes-bubble-more { margin-top: 0.45rem; font-size: 0.72rem; color: var(--color-secondary); }
+@media (prefers-reduced-motion: reduce) { .notes-bubble { animation: none; } }
+
+/* Selection mode: a checkbox in each column title ticks the whole column */
+.column-select-all { display: inline-flex; flex: none; align-items: center; justify-content: center; padding: 0; border: 0; background: none; color: var(--text-muted); cursor: pointer; border-radius: 6px; }
+.column-select-all.is-on { color: var(--color-primary); }
+.column-select-all:hover { color: var(--color-primary); }
+.column-select-all:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }

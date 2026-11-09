@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import type { CSSProperties, MouseEvent, ReactNode } from 'react';
 import type { ToastState } from './useToast';
 import type { Activity, User } from './db';
@@ -183,10 +184,10 @@ export function Avatar({ name, size = 36, online }: { name: string; size?: numbe
 }
 
 // Everyone who has a copy of a shared task, overlapping like a group of faces.
-export function AvatarStack({ members, max = 4, size = 24 }: { members: { name: string; online?: boolean }[]; max?: number; size?: number }) {
+export function AvatarStack({ members, max = 4, size = 24, tipPrefix = 'Participan' }: { members: { name: string; online?: boolean }[]; max?: number; size?: number; tipPrefix?: string }) {
   const shown = members.slice(0, max);
   const extra = members.length - shown.length;
-  const tip = `Participan: ${members.map(m => m.name).join(', ')}`;
+  const tip = `${tipPrefix}: ${members.map(m => m.name).join(', ')}`;
   return (
     <span className="avatar-stack" data-tip={tip} role="img" aria-label={tip}>
       {shown.map(m => <Avatar key={m.name} name={m.name} size={size} online={m.online} />)}
@@ -217,6 +218,7 @@ export function Meta({ icon, tip, children, tone }: { icon: string; tip: string;
 }
 
 // What sets a shared or repeating task apart: its own icon and color. Nothing for a normal task.
+
 export function KindBadge({ act, sharedStats }: { act: Activity; sharedStats?: SharedStats }) {
   const avg = sharedStats?.average;
   const people = sharedStats ? `${sharedStats.people} ${sharedStats.people === 1 ? 'persona' : 'personas'}` : '';
@@ -434,20 +436,62 @@ export function TaskCardBody({
 }
 
 // Compact card used in the admin dashboard's per-user map.
+// A note or comment shown in the hover bubble of a mini card (newest first).
+export interface MiniNote { name: string; text: string; createdAt: string }
+
+const SHOWN_NOTES = 3;
+
+// Floating bubble with the latest notes/comments of a task. Portaled to <body> and `position: fixed`, so
+// neither the scrolling mini columns nor the card's own hover transform can clip or move it.
+function NotesBubble({ notes, anchor }: { notes: MiniNote[]; anchor: DOMRect }) {
+  const width = 280;
+  const left = Math.min(Math.max(8, anchor.left), window.innerWidth - width - 8);
+  const below = anchor.top < 220; // no room above → open downwards
+  const style: CSSProperties = { left, width, ...(below ? { top: anchor.bottom + 6 } : { bottom: window.innerHeight - anchor.top + 6 }) };
+  const when = (iso: string) => new Date(iso).toLocaleString('es-MX', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  return createPortal(
+    <div className="notes-bubble" style={style} role="tooltip">
+      <div className="notes-bubble-title"><Icon name="chat_bubble" size={14} /> {notes.length === 1 ? '1 comentario' : `${notes.length} comentarios`}</div>
+      <ul>
+        {notes.slice(0, SHOWN_NOTES).map((n, i) => (
+          <li key={i}>
+            <div className="notes-bubble-head"><strong>{n.name}</strong><time dateTime={n.createdAt}>{when(n.createdAt)}</time></div>
+            <p>{n.text}</p>
+          </li>
+        ))}
+      </ul>
+      {notes.length > SHOWN_NOTES && <div className="notes-bubble-more">y {notes.length - SHOWN_NOTES} más…</div>}
+    </div>,
+    document.body
+  );
+}
+
 export function MiniTaskCard({
-  act, today, overdue, status, sharedStats,
+  act, today, overdue, status, sharedStats, notes,
 }: {
   act: Activity;
   today: string;
   overdue: boolean;
   status: 'todo' | 'doing' | 'done' | 'cancelled';
   sharedStats?: SharedStats;
+  notes?: MiniNote[];
 }) {
+  const [anchor, setAnchor] = useState<DOMRect | null>(null);
+  const hasNotes = !!notes && notes.length > 0;
+  const show = (el: HTMLElement) => { if (hasNotes) setAnchor(el.getBoundingClientRect()); };
   return (
-    <div className={`admin-mini-card mini-${status} ${overdue ? 'overdue' : ''} ${kindClass(act)}`}>
+    <div
+      className={`admin-mini-card mini-${status} ${overdue ? 'overdue' : ''} ${kindClass(act)} ${hasNotes ? 'has-notes' : ''}`}
+      onMouseEnter={(e) => show(e.currentTarget)}
+      onMouseLeave={() => setAnchor(null)}
+      onFocus={(e) => show(e.currentTarget)}
+      onBlur={() => setAnchor(null)}
+      tabIndex={hasNotes ? 0 : undefined}
+    >
       <div className="mini-card-top">
         <div className="admin-mini-card-title">{act.title}</div>
         <div className="mini-card-flags">
+          {hasNotes && <span className="meta mini-notes-badge" role="img" aria-label={`${notes.length} comentarios`}><Icon name="chat_bubble" size={13} />{notes.length}</span>}
           {status === 'doing' && act.kind !== 'shared' && <Meta icon="donut_small" tip="Avance">{act.progress ?? 50}%</Meta>}
           {act.archived && <span className="meta" data-tip="Archivada" role="img" aria-label="Archivada"><Icon name="inventory_2" size={14} /></span>}
           <KindBadge act={act} sharedStats={sharedStats} />
@@ -460,6 +504,7 @@ export function MiniTaskCard({
       <div className="mini-card-meta">
         <TaskDates start={act.startDate} end={act.endDate} overdueDays={overdue ? daysOverdue(act.endDate, today) : undefined} />
       </div>
+      {anchor && hasNotes && <NotesBubble notes={notes} anchor={anchor} />}
     </div>
   );
 }

@@ -6,6 +6,9 @@ import {
   subscribePresence,
   subscribeComments,
   subscribeCommentReads,
+  subscribeNotes,
+  addNote,
+  deleteNote,
   subscribeNotices,
   publishNotice,
   endNotice,
@@ -35,6 +38,7 @@ import {
   clearUserActivities,
   createTeam,
   deleteTeam,
+  updateTeam,
   clearTeamActivities,
   heartbeat,
   clearPresence,
@@ -42,14 +46,14 @@ import {
   updateProfile,
   avatarUrl,
 } from './db';
-import type { Activity, User, Team, PresenceEntry, TaskComment, CommentRead, Notice } from './db';
+import type { Activity, User, UserRole, Team, PresenceEntry, TaskComment, TaskNote, CommentRead, Notice } from './db';
 // Using Material Symbols Rounded via Google Fonts, no Lucide React imports needed
 import './App.css';
 import { todayString, isOverdue as isOverdueOn, daysOverdue, formatShortDate } from './dates';
 import { isLive, isDoneVisibleOnBoard as isDoneOnBoard, inArchivero, matchesTab, archiveTabCounts, matchesArchiveView, archiveViewCounts } from './archive';
 import type { ArchiveTab, ArchiveView } from './archive';
 import { buildLoginSummary, type LoginSummary } from './summary';
-import { Icon, IconButton, Avatar, Meta, PriorityFlag, MiniTaskCard, TaskCardBody, TaskDates, FieldLabel, Segmented, KindChoice, Toast } from './ui';
+import { Icon, IconButton, Avatar, Meta, PriorityFlag, MiniTaskCard, AvatarStack, type MiniNote, TaskCardBody, TaskDates, FieldLabel, Segmented, KindChoice, Toast } from './ui';
 import { REPEAT_OPTIONS, WEEKDAYS, MONTH_NAMES, usesWeekday, dayFor, describeRepeat, kindClass, sharedGroup, sharedProgress, copyProgress, unreadComments } from './taskKinds';
 import type { Repeat, SharedStats } from './taskKinds';
 import { useToast } from './useToast';
@@ -66,6 +70,8 @@ function App() {
   const [usernameInput, setUsernameInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  // Admin and power user sign in with a password; viewer and regular users with just the username.
+  const roleUsesPassword = (r?: string | null) => r === 'admin' || r === 'power';
   const [errorMsg, setErrorMsg] = useState('');
   const [currentView, setCurrentView] = useState<'board' | 'stats'>('board');
 
@@ -101,6 +107,10 @@ function App() {
   const [modalError, setModalError] = useState('');
   const [comments, setComments] = useState<TaskComment[]>([]);
   const [commentReads, setCommentReads] = useState<CommentRead[]>([]);
+  const [notes, setNotes] = useState<TaskNote[]>([]);
+  const [notesForId, setNotesForId] = useState<string | null>(null);
+  const [noteText, setNoteText] = useState('');
+  const [noteBusy, setNoteBusy] = useState(false);
   const [commentText, setCommentText] = useState('');
   const [commentBusy, setCommentBusy] = useState(false);
   // The shared task whose comments panel is open (opened by clicking its card).
@@ -111,6 +121,7 @@ function App() {
   const [targetAssignee, setTargetAssignee] = useState<string>('');  // Admin filter
   const [viewingUserAsAdmin, setViewingUserAsAdmin] = useState<User | null>(null);
   // "Seleccionar para archivar": while on, the board's cards are ticked instead of opened.
+  const isViewerRef = useRef(false);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [archiveView, setArchiveView] = useState<ArchiveView>('active'); // admin: all / not archived / archived
@@ -125,7 +136,7 @@ function App() {
   const [isCreateUserModalOpen, setIsCreateUserModalOpen] = useState(false);
   const [newUsernameInput, setNewUsernameInput] = useState('');
   const [newFullNameInput, setNewFullNameInput] = useState('');
-  const [newUserRole, setNewUserRole] = useState<'admin' | 'user'>('user');
+  const [newUserRole, setNewUserRole] = useState<UserRole>('user');
   const [newUserPassword, setNewUserPassword] = useState('');
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [currentPasswordInput, setCurrentPasswordInput] = useState('');
@@ -156,7 +167,7 @@ function App() {
   });
   const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
   const [roleTarget, setRoleTarget] = useState('');
-  const [roleChoice, setRoleChoice] = useState<'admin' | 'user'>('user');
+  const [roleChoice, setRoleChoice] = useState<UserRole>('user');
   const [roleNewPassword, setRoleNewPassword] = useState('');
   const [roleAdminPass, setRoleAdminPass] = useState('');
   const [roleBusy, setRoleBusy] = useState(false);
@@ -191,6 +202,7 @@ function App() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [viewingTeam, setViewingTeam] = useState<Team | null>(null);
   const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
+  const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
   const [teamNameInput, setTeamNameInput] = useState('');
   const [teamMemberSelection, setTeamMemberSelection] = useState<Set<string>>(new Set());
   const [teamMemberSearch, setTeamMemberSearch] = useState('');
@@ -253,6 +265,7 @@ function App() {
   };
 
   const handleSelectUser = (u: User | null) => {
+    if (u && isViewerRef.current) return;
     setViewingUserAsAdmin(u);
     setViewingTeam(null);
     if (u) {
@@ -263,6 +276,7 @@ function App() {
   };
 
   const handleSelectTeam = (t: Team | null) => {
+    if (t && isViewerRef.current) return;
     setViewingTeam(t);
     setViewingUserAsAdmin(null);
     if (t) {
@@ -283,6 +297,13 @@ function App() {
   useEffect(() => {
     const handleHashChange = () => {
       const hash = window.location.hash;
+      // A viewer can't open Productividad nor anyone's board, whatever the address says.
+      if (isViewerRef.current) {
+        setCurrentView('board');
+        setViewingUserAsAdmin(null);
+        setViewingTeam(null);
+        return;
+      }
       if (hash === '#stats') {
         setCurrentView('stats');
       } else if (hash.startsWith('#user-')) {
@@ -319,9 +340,11 @@ function App() {
     const unsubPresence = subscribePresence(setPresence);
     const unsubComments = subscribeComments(setComments);
     const unsubCommentReads = subscribeCommentReads(setCommentReads);
+    const unsubNotes = subscribeNotes(setNotes);
     const unsubNotices = subscribeNotices(setNotices);
     return () => {
       unsubActivities();
+      unsubNotes();
       unsubUsers();
       unsubTeams();
       unsubPresence();
@@ -359,10 +382,10 @@ function App() {
   // Lock background scroll while any modal is open, so the modal is always
   // immediately visible instead of requiring the page to be scrolled first.
   useEffect(() => {
-    const anyModalOpen = isModalOpen || isTeamModalOpen || isCreateUserModalOpen || confirmConfig.isOpen || commentsForId !== null;
+    const anyModalOpen = isModalOpen || isTeamModalOpen || isCreateUserModalOpen || confirmConfig.isOpen || commentsForId !== null || notesForId !== null;
     document.body.style.overflow = anyModalOpen ? 'hidden' : '';
     return () => { document.body.style.overflow = ''; };
-  }, [isModalOpen, isTeamModalOpen, isCreateUserModalOpen, confirmConfig.isOpen, commentsForId]);
+  }, [isModalOpen, isTeamModalOpen, isCreateUserModalOpen, confirmConfig.isOpen, commentsForId, notesForId]);
 
   // Presence heartbeats never stop ticking on their own, so we also refresh
   // this every few seconds purely to re-check which entries have gone stale.
@@ -429,7 +452,7 @@ function App() {
     const val = e.target.value;
     setUsernameInput(val);
     const typed = val.trim().toLowerCase();
-    if (typed === 'admin' || users.some(u => u.username.toLowerCase() === typed && u.role === 'admin')) {
+    if (typed === 'admin' || users.some(u => u.username.toLowerCase() === typed && roleUsesPassword(u.role))) {
       setShowPassword(true);
     } else {
       setShowPassword(false);
@@ -457,19 +480,19 @@ function App() {
 
     const existingUser = users.find(u => u.username.toLowerCase() === cleanUsername.toLowerCase());
 
-    // Admin accounts (the built-in "admin" or any user with the admin role)
+    // Admin accounts (the built-in "admin" or any user with the admin role) and power users
     // must present their password; the server is what checks it.
-    if (cleanUsername.toLowerCase() === 'admin' || existingUser?.role === 'admin') {
+    if (cleanUsername.toLowerCase() === 'admin' || roleUsesPassword(existingUser?.role)) {
       if (!passwordInput) {
-        setErrorMsg('Escribe la contraseña de administrador');
+        setErrorMsg('Escribe tu contraseña');
         return;
       }
       const auth = await loginAdmin(existingUser?.username ?? cleanUsername, passwordInput);
       if (!auth.ok) {
-        setErrorMsg(auth.error === 'timeout' ? 'No se pudo conectar con el servidor' : 'Contraseña de administrador incorrecta');
+        setErrorMsg(auth.error === 'timeout' ? 'No se pudo conectar con el servidor' : 'Contraseña incorrecta');
         return;
       }
-      const loggedIn = await loginUser(existingUser?.username ?? cleanUsername, existingUser?.fullName, 'admin');
+      const loggedIn = await loginUser(existingUser?.username ?? cleanUsername, existingUser?.fullName, existingUser?.role ?? 'admin');
       setUser(loggedIn);
       showLoginSummary(loggedIn, existingUser?.lastLogin);
       setPasswordInput('');
@@ -569,8 +592,17 @@ function App() {
     setIsRoleModalOpen(true);
   };
 
-  const roleOf = (username: string): 'admin' | 'user' =>
-    users.find(u => u.username === username)?.role === 'admin' ? 'admin' : 'user';
+  const ROLE_LABELS: Record<UserRole, string> = { user: 'Normal user', power: 'Power user', viewer: 'Visor', admin: 'Administrador' };
+  const ROLE_HINTS: Record<UserRole, string> = {
+    user: 'Trabaja en su propio tablero y en los de sus equipos.',
+    power: 'Ve el panel, crea y asigna tareas y comenta en cualquiera; no administra usuarios, contraseñas ni equipos. Entra con contraseña.',
+    viewer: 'Solo ve el Mapa de Actividades del Equipo; no entra a ningún tablero.',
+    admin: 'Control total del sistema. Entra con contraseña.',
+  };
+  const roleOf = (username: string): UserRole => {
+    const r = users.find(u => u.username === username)?.role;
+    return r === 'admin' || r === 'power' || r === 'viewer' ? r : 'user';
+  };
 
   const handleRoleTargetChange = (username: string) => {
     setRoleTarget(username);
@@ -579,11 +611,15 @@ function App() {
     if (username) setRoleChoice(roleOf(username));
   };
 
+  // Admin and power user sign in with a password: it is asked whenever the person doesn't already hold
+  // that role with one (the server keeps an existing password, so re-saving never resets it).
+  const needsNewPassword = !!roleTarget && roleUsesPassword(roleChoice) && roleOf(roleTarget) !== roleChoice;
+
   const handleSaveRole = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !roleTarget) return;
-    if (roleChoice === 'admin' && roleOf(roleTarget) !== 'admin' && roleNewPassword.length < 4) {
-      setRoleMsg({ ok: false, text: 'La contraseña del nuevo administrador debe tener al menos 4 caracteres.' });
+    if (needsNewPassword && roleNewPassword.length < 4) {
+      setRoleMsg({ ok: false, text: 'La contraseña debe tener al menos 4 caracteres.' });
       return;
     }
     setRoleBusy(true);
@@ -591,15 +627,15 @@ function App() {
     const res = await setUserRole({
       adminUsername: user.username, adminPassword: roleAdminPass,
       username: roleTarget, role: roleChoice,
-      password: roleChoice === 'admin' ? roleNewPassword : undefined,
+      password: needsNewPassword ? roleNewPassword : undefined,
     });
     setRoleBusy(false);
     if (!res.ok) {
       const messages: Record<string, string> = {
         bad_password: 'Tu contraseña de administrador es incorrecta.',
         forbidden: 'Solo el administrador principal puede cambiar roles.',
-        password_required: 'Escribe una contraseña para el nuevo administrador.',
-        too_short: 'La contraseña del nuevo administrador debe tener al menos 4 caracteres.',
+        password_required: 'Escribe una contraseña para esta cuenta.',
+        too_short: 'La contraseña debe tener al menos 4 caracteres.',
         protected: 'El rol de la cuenta "admin" no se puede cambiar.',
         self: 'No puedes cambiar tu propio rol.',
         not_found: 'Ese usuario ya no existe.',
@@ -609,7 +645,7 @@ function App() {
       return;
     }
     const target = users.find(u => u.username === roleTarget);
-    showToast(`${target?.fullName || roleTarget} ahora es ${roleChoice === 'admin' ? 'administrador' : 'usuario'}.`, true);
+    showToast(`${target?.fullName || roleTarget} ahora es: ${ROLE_LABELS[roleChoice].toLowerCase()}.`, true);
     setIsRoleModalOpen(false);
   };
 
@@ -817,8 +853,8 @@ function App() {
       return;
     }
 
-    if (newUserRole === 'admin' && newUserPassword.length < 4) {
-      setCreateUserError('La contraseña del administrador debe tener al menos 4 caracteres.');
+    if (roleUsesPassword(newUserRole) && newUserPassword.length < 4) {
+      setCreateUserError('La contraseña debe tener al menos 4 caracteres.');
       return;
     }
 
@@ -826,7 +862,7 @@ function App() {
     const res = await createUserByAdmin({
       adminUsername: user.username, adminPassword: newUserAdminPassword,
       username: cleanUsername, fullName: cleanFullName, role: newUserRole, email: newUserEmail.trim(),
-      password: newUserRole === 'admin' ? newUserPassword : undefined,
+      password: roleUsesPassword(newUserRole) ? newUserPassword : undefined,
     });
     if (!res.ok) {
       const messages: Record<string, string> = {
@@ -879,7 +915,18 @@ function App() {
     );
   };
 
+  // Admin: edit the team being viewed (name and who belongs to it). Same dialog as creating one.
+  const openEditTeamModal = (team: Team) => {
+    setEditingTeamId(team.id);
+    setTeamNameInput(team.name);
+    const known = new Set(users.map(u => u.username.toLowerCase()));
+    setTeamMemberSelection(new Set(team.memberUsernames.filter(m => known.has(m.toLowerCase()))));
+    setTeamMemberSearch('');
+    setIsTeamModalOpen(true);
+  };
+
   const openCreateTeamModal = () => {
+    setEditingTeamId(null);
     setTeamNameInput('');
     setTeamMemberSelection(new Set());
     setTeamMemberSearch('');
@@ -901,9 +948,60 @@ function App() {
   const handleSaveTeam = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!teamNameInput.trim() || teamMemberSelection.size === 0) return;
-    await createTeam(teamNameInput.trim(), [...teamMemberSelection]);
-    setIsTeamModalOpen(false);
+    const name = teamNameInput.trim();
+    const members = [...teamMemberSelection];
+    if (!editingTeamId) {
+      await createTeam(name, members);
+      setIsTeamModalOpen(false);
+      return;
+    }
+    const team = teams.find(t => t.id === editingTeamId);
+    if (!team || !user) return;
+    const save = async () => {
+      const res = await updateTeam(team.id, name, members, user.username);
+      if (!res.ok) {
+        showToast(
+          res.error === 'name_taken' ? 'Ya existe otro equipo con ese nombre.'
+          : res.error === 'invalid_name' ? 'El nombre del equipo no es válido.'
+          : res.error === 'no_members' ? 'El equipo necesita al menos una persona.'
+          : res.error === 'forbidden' ? 'Solo un administrador puede editar equipos.'
+          : 'No se pudo guardar el equipo.',
+          false
+        );
+        return;
+      }
+      setIsTeamModalOpen(false);
+      setEditingTeamId(null);
+      const parts = [
+        res.renamed ? 'nombre actualizado' : '',
+        res.added?.length ? `${res.added.length} ${res.added.length === 1 ? 'persona agregada' : 'personas agregadas'}` : '',
+        res.removed?.length ? `${res.removed.length} ${res.removed.length === 1 ? 'persona quitada' : 'personas quitadas'}` : '',
+      ].filter(Boolean);
+      showToast(parts.length ? `Equipo guardado: ${parts.join(', ')}.` : 'No había cambios que guardar.', true);
+    };
+    // Taking people off: their tasks stay on the team board, so say how many they have.
+    const leaving = team.memberUsernames.filter(m => !teamMemberSelection.has(m) && !members.some(x => x.toLowerCase() === m.toLowerCase()));
+    if (leaving.length > 0) {
+      const lower = new Set(leaving.map(m => m.toLowerCase()));
+      const open = activities.filter(a => a.teamId === team.id && lower.has(a.username.toLowerCase()) && (a.status === 'todo' || a.status === 'doing')).length;
+      showConfirm(
+        'Quitar personas del equipo',
+        `Vas a quitar a ${leaving.join(', ')} de "${team.name}". Dejarán de ver el tablero del equipo y de aparecer como responsables.${open > 0 ? ` Tienen ${open} ${open === 1 ? 'tarea abierta' : 'tareas abiertas'} en este tablero, que se quedan asignadas a ellas hasta que las reasignes o las elimines.` : ''}`,
+        () => { void save(); }
+      );
+      return;
+    }
+    await save();
   };
+
+  // The team being viewed follows edits made elsewhere (name, members); a member who is taken off leaves it.
+  useEffect(() => {
+    if (!viewingTeam) return;
+    const fresh = teams.find(t => t.id === viewingTeam.id);
+    if (!fresh) return;
+    if (fresh.name === viewingTeam.name && fresh.memberUsernames.join('|') === viewingTeam.memberUsernames.join('|')) return;
+    setViewingTeam(fresh);
+  }, [teams, viewingTeam]);
 
   // Drag and Drop
   const handleDragStart = (e: React.DragEvent, id: string) => {
@@ -1054,8 +1152,67 @@ function App() {
     setCommentsForId(activity.id);
   };
 
+  // Own progress (label, percentage and slider). Shared tasks let anyone on the panel move it, as before;
+  // an individual / repeating task only lets its owner (or an admin) move it.
+  const renderOwnProgress = (act: Activity) => {
+                // This person's own progress, first thing in the panel, and it can be moved
+                const pct = ownDraft?.id === act.id ? ownDraft.value : copyProgress(act);
+                const owner = users.find(u => u.username.toLowerCase() === act.username.toLowerCase())?.fullName || act.username;
+                const mine = act.username.toLowerCase() === user?.username.toLowerCase();
+                const canMove = act.kind === 'shared' || mine || canSupervise;
+                const label = mine ? 'Mi avance' : `Avance de ${owner}`;
+                return (
+                  <div className="own-progress">
+                    <div className="own-progress-head">
+                      <Avatar name={owner} size={26} online={isUserOnline(act.username)} />
+                      <span className="own-progress-label">{label}</span>
+                      <strong className="own-progress-pct">{pct}%</strong>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={5}
+                      className="own-progress-range"
+                      style={{ ['--fill' as string]: `${pct}%`, ['--fill-color' as string]: pct >= 100 ? 'var(--color-done)' : 'var(--color-doing)' }}
+                      value={pct}
+                      disabled={act.status === 'cancelled' || !canMove}
+                      aria-label={label}
+                      onChange={(e) => handleOwnProgress(act, Number(e.target.value))}
+                    />
+                  </div>
+                );
+  };
+
+  // An individual or repeating task's card opens its timeline of notes; the pencil opens the editor.
+  const openNotesPanel = (activity: Activity) => {
+    setOwnDraft(null);
+    setNoteText('');
+    setNotesForId(activity.id);
+  };
+
+  const handleSendNote = async (activityId: string) => {
+    const text = noteText.trim();
+    if (!user || !text || noteBusy) return;
+    setNoteBusy(true);
+    const res = await addNote(activityId, user.username, text);
+    setNoteBusy(false);
+    if (!res.ok) {
+      showToast(res.error === 'forbidden' ? 'Solo quien tiene la tarea puede anotar en ella.' : 'No se pudo guardar la nota.', false);
+      return;
+    }
+    setNoteText('');
+  };
+
+  // What a card does when clicked: shared → chat, individual/repeating → timeline.
+  const openCard = (act: Activity) => {
+    if (act.kind === 'shared') openCommentsPanel(act);
+    else openNotesPanel(act);
+  };
+
   const openEditModal = (activity: Activity) => {
     setCommentsForId(null);
+    setNotesForId(null);
     setModalMode('edit');
     setSelectedActivity(activity);
     setTitle(activity.title);
@@ -1227,26 +1384,39 @@ function App() {
     setIsModalOpen(false);
   };
 
-  // "Archivar todo" next to "Hecho": every completed task on this board, after a confirmation.
-  const archiveAllDone = () => {
-    const done = displayedActivities.filter(a => a.status === 'done' && isDoneVisibleOnBoard(a));
-    if (done.length === 0) return;
-    const n = done.length;
-    showConfirm(
-      'Archivar tareas hechas',
-      `Se archivarán ${n} ${n === 1 ? 'tarea hecha' : 'tareas hechas'} de este tablero. Las verás en el Archivero y puedes restaurarlas.`,
-      () => {
-        void setActivitiesArchived(done.map(a => a.id), true);
-        showToast(`${n} ${n === 1 ? 'tarea archivada' : 'tareas archivadas'}.`, true);
-      }
-    );
-  };
-
   const toggleSelected = (id: string) => setSelectedIds(prev => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id); else next.add(id);
     return next;
   });
+
+  // In selection mode each column title gets a checkbox that ticks (or clears) every task of that column.
+  const columnIds = (status: 'todo' | 'doing' | 'done') =>
+    displayedActivities.filter(a => a.status === status && (status !== 'done' || isDoneVisibleOnBoard(a))).map(a => a.id);
+  const renderSelectAll = (status: 'todo' | 'doing' | 'done', name: string) => {
+    const ids = columnIds(status);
+    if (!selectMode || ids.length === 0) return null;
+    const picked = ids.filter(id => selectedIds.has(id)).length;
+    const all = picked === ids.length;
+    const label = `${all ? 'Quitar la selección de' : 'Seleccionar'} todas las tareas de ${name}`;
+    return (
+      <button
+        type="button"
+        className={`column-select-all ${picked > 0 ? 'is-on' : ''}`}
+        role="checkbox"
+        aria-checked={all ? true : picked > 0 ? 'mixed' : false}
+        aria-label={label}
+        data-tip={label}
+        onClick={() => setSelectedIds(prev => {
+          const next = new Set(prev);
+          for (const id of ids) { if (all) next.delete(id); else next.add(id); }
+          return next;
+        })}
+      >
+        <Icon name={all ? 'check_box' : picked > 0 ? 'indeterminate_check_box' : 'check_box_outline_blank'} size={22} />
+      </button>
+    );
+  };
 
   const cancelSelection = () => { setSelectMode(false); setSelectedIds(new Set()); };
 
@@ -1339,6 +1509,13 @@ function App() {
   }, [users, user]);
 
   const isAdmin = user?.username.toLowerCase() === 'admin' || user?.role === 'admin';
+  // Extra roles (set by the role manager): a power user sees the whole admin panel but changes nothing;
+  // a viewer only sees the "Mapa de Actividades del Equipo" and can't open anyone's board.
+  const isPower = !isAdmin && user?.role === 'power';
+  const isViewer = !isAdmin && user?.role === 'viewer';
+  const seesPanel = isAdmin || isPower || isViewer;
+  const canSupervise = isAdmin || isPower;
+  isViewerRef.current = isViewer;
 
   // Every user must have an email (it's where task notices are sent). Whoever is
   // logged in without one gets a blocking dialog; an admin can also edit others'.
@@ -1388,24 +1565,26 @@ function App() {
   // server-side expiry, so readers filter by lastSeen freshness instead.
   useEffect(() => {
     if (!user) return;
+    // The context says WHICH board this person is on, so others can tell who is looking at theirs: a team
+    // board, someone's personal board (supervised by an admin, or the person's own) or the admin dashboard.
     const context = viewingTeam
       ? `team-${viewingTeam.id}`
       : viewingUserAsAdmin
         ? `user-${viewingUserAsAdmin.username}`
-        : isAdmin
+        : seesPanel
           ? 'admin'
-          : 'personal';
+          : `user-${user.username}`;
 
     void heartbeat(user.username, context);
     const interval = setInterval(() => void heartbeat(user.username, context), 8000);
     return () => clearInterval(interval);
-  }, [user, viewingTeam, viewingUserAsAdmin, isAdmin]);
+  }, [user, viewingTeam, viewingUserAsAdmin, seesPanel]);
 
   const myTeams = user ? teams.filter(t => t.memberUsernames.some(m => m.toLowerCase() === user.username.toLowerCase())) : [];
 
   const scopedActivities = viewingTeam
     ? activities.filter(a => a.teamId === viewingTeam.id)
-    : isAdmin
+    : canSupervise
       ? (viewingUserAsAdmin
           ? activities.filter(a => a.username.toLowerCase() === viewingUserAsAdmin.username.toLowerCase() && !a.teamId)
           : activities.filter(a => !a.teamId)
@@ -1422,9 +1601,18 @@ function App() {
   const now = Date.now();
   const onlineNow = presence.filter(p => isPresenceFresh(p, now));
   const isUserOnline = (username: string) => onlineNow.some(p => p.username.toLowerCase() === username.toLowerCase());
-  const teamViewers = viewingTeam
-    ? onlineNow.filter(p => p.context === `team-${viewingTeam.id}` && p.username.toLowerCase() !== user?.username.toLowerCase())
+  // Everyone else who is on the board being shown right now (compared case-insensitively: usernames are).
+  const boardContext = viewingTeam
+    ? `team-${viewingTeam.id}`
+    : viewingUserAsAdmin
+      ? `user-${viewingUserAsAdmin.username}`
+      : user && !seesPanel
+        ? `user-${user.username}`
+        : null;
+  const boardViewers = boardContext
+    ? onlineNow.filter(p => p.context.toLowerCase() === boardContext.toLowerCase() && p.username.toLowerCase() !== user?.username.toLowerCase())
     : [];
+  const thisBoard = !viewingTeam && !viewingUserAsAdmin ? 'tu tablero' : 'este tablero';
 
   // A completed task stays in "Hecho" until the USER archives it: nothing is archived by itself. The rule
   // lives in src/archive.ts, shared with the other views.
@@ -1492,6 +1680,16 @@ function App() {
   // Who a task can be assigned to / shared with: the team's members on a team board, otherwise
   // everyone except the built-in admin account.
   const assigneeOptions = viewingTeam ? viewingTeam.memberUsernames : users.filter(u => u.username.toLowerCase() !== 'admin').map(u => u.username);
+  // What a mini card in the admin map can show on hover: a shared task's chat or an individual / repeating
+  // task's timeline notes, newest first.
+  const notesFor = (act: Activity): MiniNote[] => {
+    const rows = act.kind === 'shared' && act.sharedId
+      ? comments.filter(c => c.sharedId === act.sharedId)
+      : notes.filter(n => n.activityId === act.id);
+    return rows
+      .map(r => ({ name: displayNameOf(r.username), text: r.text, createdAt: r.createdAt }))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  };
   const displayNameOf = (username: string) => users.find(u => u.username.toLowerCase() === username.toLowerCase())?.fullName || username;
   // On a shared task being edited: who is on it now, and who would be added/removed by the picker.
   // The picker also lists the people already on it even if they are no longer in the usual options.
@@ -1685,7 +1883,7 @@ function App() {
             <div className={`auth-expandable-field ${showPassword ? 'is-expanded' : ''}`}>
               <div className="auth-expandable-content">
                 <div className="form-group" style={{ marginBottom: 0 }}>
-                  <FieldLabel icon="lock">Contraseña de Admin</FieldLabel>
+                  <FieldLabel icon="lock">Contraseña</FieldLabel>
                   <div style={{ position: 'relative' }}>
                     <input
                       type="password"
@@ -1718,21 +1916,24 @@ function App() {
   }
 
   return (
-    <div className={`app-container ${isAdmin && !viewingUserAsAdmin && !viewingTeam ? 'app-container-wide' : ''}`}>
+    <div className={`app-container ${seesPanel && !viewingUserAsAdmin && !viewingTeam ? 'app-container-wide' : ''}`}>
       {noticeBanners}
       {/* Top Navbar */}
       <div className="glass-panel board-header animate-fade-in">
         <div className="user-badge">
-          {viewingTeam ? (
-            <div className="user-avatar"><span className="material-symbols-rounded">groups</span></div>
+          {(viewingTeam || viewingUserAsAdmin) && (
+            <IconButton icon="arrow_back" label={canSupervise ? 'Volver al panel general' : 'Volver a mi tablero'} variant="tonal" onClick={() => { handleSelectUser(null); handleSelectTeam(null); }} />
+          )}
+          {viewingTeam || viewingUserAsAdmin ? (
+            <div className="user-avatar"><span className="material-symbols-rounded">{viewingTeam ? 'groups' : 'visibility'}</span></div>
           ) : (
             <button type="button" className="user-avatar user-avatar-btn" onClick={openProfileModal} data-tip="Mi perfil" aria-label="Mi perfil">
               {myPhoto ? <img className="avatar-img" src={myPhoto} alt="" draggable={false} /> : myInitials}
             </button>
           )}
           <div className="user-info">
-            <h3>{viewingTeam ? viewingTeam.name : myName}</h3>
-            <p>{viewingTeam ? `Equipo · ${viewingTeam.memberUsernames.length} miembros` : (isAdmin ? 'Panel de Control General' : 'Tablero Personal')}</p>
+            <h3>{viewingTeam ? viewingTeam.name : viewingUserAsAdmin ? displayNameOf(viewingUserAsAdmin.username) : myName}</h3>
+            <p>{viewingTeam ? `Equipo · ${viewingTeam.memberUsernames.length} miembros` : viewingUserAsAdmin ? 'Supervisando su tablero personal' : (isAdmin ? 'Panel de Control General' : isPower ? 'Panel de Control' : isViewer ? 'Mapa de Actividades · solo lectura' : 'Tablero Personal')}</p>
           </div>
         </div>
 
@@ -1746,12 +1947,22 @@ function App() {
               </div>
             </div>
           )}
+          {isAdmin && viewingTeam && (
+            <IconButton icon="edit" label="Editar equipo" variant="tonal" onClick={() => openEditTeamModal(viewingTeam)} />
+          )}
           <IconButton icon={theme === 'dark' ? 'light_mode' : 'dark_mode'} label="Cambiar tema" onClick={toggleTheme} />
-          {(!isAdmin || viewingUserAsAdmin || viewingTeam) && (
+          {(!seesPanel || viewingUserAsAdmin || viewingTeam) && (
             <IconButton icon="folder_open" label="Archivero" onClick={() => setIsArchiveModalOpen(true)} />
           )}
-          {(!isAdmin || viewingUserAsAdmin || viewingTeam) && (
+          {/* Wiping a whole board is for administrators only (a regular user archives or deletes tasks one by one) */}
+          {isAdmin && (viewingUserAsAdmin || viewingTeam) && (
             <IconButton icon="delete_sweep" label="Limpiar tablero" variant="danger" onClick={handleClearBoard} />
+          )}
+          {isPower && !viewingTeam && !viewingUserAsAdmin && (
+            <>
+              <IconButton icon="key" label="Cambiar mi contraseña" onClick={openPasswordModal} />
+              <IconButton icon="download" label="Exportar a Excel" onClick={() => setIsExportOpen(true)} />
+            </>
           )}
           {isAdmin && !viewingTeam && (
             <>
@@ -1770,14 +1981,16 @@ function App() {
               <IconButton icon="download" label="Exportar a Excel" onClick={() => setIsExportOpen(true)} />
             </>
           )}
-          <button className="btn btn-primary" onClick={() => openCreateModal()} style={{ gap: '0.4rem', whiteSpace: 'nowrap' }}>
-            <span className="material-symbols-rounded">add</span> Nueva tarea
-          </button>
+          {!isViewer && (
+            <button className="btn btn-primary" onClick={() => openCreateModal()} style={{ gap: '0.4rem', whiteSpace: 'nowrap' }}>
+              <span className="material-symbols-rounded">add</span> Nueva tarea
+            </button>
+          )}
           <IconButton icon="logout" label="Cerrar sesión" onClick={handleLogout} />
         </div>
       </div>
 
-      {!isAdmin && !viewingTeam && myTeams.length > 0 && (
+      {!seesPanel && !viewingTeam && myTeams.length > 0 && (
         <div className="my-teams-row animate-fade-in">
           <span className="my-teams-label" data-tip="Mis equipos" role="img" aria-label="Mis equipos"><Icon name="groups" size={20} /></span>
           {myTeams.map(t => (
@@ -1789,8 +2002,9 @@ function App() {
       )}
 
       {/* Main Panel */}
-      {isAdmin && !viewingUserAsAdmin && !viewingTeam ? (
+      {seesPanel && !viewingUserAsAdmin && !viewingTeam ? (
         <div className="admin-dashboard animate-fade-in">
+          {!isViewer && (<>
           <div className="admin-view-bar">
             <span className="admin-view-label"><Icon name="inventory_2" size={18} /> Ver</span>
             <Segmented
@@ -2028,14 +2242,14 @@ function App() {
                 <h2>Equipos</h2>
               </div>
               <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', marginLeft: 'auto' }}>
-                <button
+                {isAdmin && <button
                   type="button"
                   className="btn btn-primary"
                   style={{ width: 'auto', gap: '0.4rem' }}
                   onClick={openCreateTeamModal}
                 >
                   <span className="material-symbols-rounded">add</span> Crear Equipo
-                </button>
+                </button>}
                 <button type="button" className="btn btn-secondary" style={{ width: 'auto', gap: '0.3rem' }} data-tip="Minimizar la lista de equipos" onClick={() => setTeamsExpanded(false)}>
                   <Icon name="expand_less" size={18} /> Minimizar
                 </button>
@@ -2050,7 +2264,7 @@ function App() {
                   const teamTaskCount = activities.filter(a => a.teamId === t.id && matchesArchiveView(a, archiveView)).length;
                   return (
                     <div key={t.id} className={`team-card ${filterActive ? (matches ? 'is-match' : 'is-dimmed') : ''}`} onClick={() => handleSelectTeam(t)}>
-                      <IconButton icon="delete" label="Eliminar equipo" variant="danger" size={30} className="team-card-delete" onClick={(e) => handleDeleteTeam(t.id, t.name, e)} />
+                      {isAdmin && <IconButton icon="delete" label="Eliminar equipo" variant="danger" size={30} className="team-card-delete" onClick={(e) => handleDeleteTeam(t.id, t.name, e)} />}
                       <div className="team-card-icon">
                         <span className="material-symbols-rounded">groups</span>
                       </div>
@@ -2080,6 +2294,8 @@ function App() {
             );
           })()}
 
+          </>)}
+
           {/* Activity Map / Grid Header */}
           <div className="glass-panel activity-map-section">
             <div className="admin-header">
@@ -2087,14 +2303,16 @@ function App() {
                 <span className="material-symbols-rounded" style={{ fontSize: '24px', color: 'var(--color-secondary)' }}>map</span>
                 <h2>Mapa de Actividades del Equipo</h2>
               </div>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                style={{ width: 'auto', gap: '0.4rem' }}
-                onClick={() => window.location.hash = 'stats'}
-              >
-                <span className="material-symbols-rounded">bar_chart</span> Ver Productividad
-              </button>
+              {!isViewer && (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ width: 'auto', gap: '0.4rem' }}
+                  onClick={() => window.location.hash = 'stats'}
+                >
+                  <span className="material-symbols-rounded">bar_chart</span> Ver Productividad
+                </button>
+              )}
             </div>
 
             {/* Detailed row-by-row view of user activities */}
@@ -2110,8 +2328,8 @@ function App() {
                 <div
                   className="admin-user-row"
                   key={u.username}
-                  onClick={() => handleSelectUser(u)}
-                  style={{ cursor: 'pointer', transition: 'var(--transition-smooth)' }}
+                  onClick={isViewer ? undefined : () => handleSelectUser(u)}
+                  style={{ cursor: isViewer ? 'default' : 'pointer', transition: 'var(--transition-smooth)' }}
                 >
                   <div className="admin-user-info">
                     <div className="user-card">
@@ -2122,10 +2340,12 @@ function App() {
                             <span className="admin-username" data-tip={displayName}>{displayName}</span>
                             <span className="admin-user-handle">@{u.username}</span>
                           </div>
-                          <div className="user-card-actions">
-                            <IconButton icon="mail" label="Editar correo" variant="tonal" size={32} onClick={(e) => openEmailEditor(u, e)} />
-                            <IconButton icon="delete" label="Eliminar usuario" variant="danger" size={32} onClick={(e) => handleDeleteUser(u.username, e)} />
-                          </div>
+                          {isAdmin && (
+                            <div className="user-card-actions">
+                              <IconButton icon="mail" label="Editar correo" variant="tonal" size={32} onClick={(e) => openEmailEditor(u, e)} />
+                              <IconButton icon="delete" label="Eliminar usuario" variant="danger" size={32} onClick={(e) => handleDeleteUser(u.username, e)} />
+                            </div>
+                          )}
                         </div>
                         <div className="user-card-chips">
                           <Meta icon="schedule" tip={`Última sesión: ${new Date(u.lastLogin).toLocaleString()}`}>
@@ -2162,7 +2382,7 @@ function App() {
                         <Icon name="assignment" size={14} /> Por hacer ({userActs.filter(a => a.status === 'todo').length})
                       </span>
                       {userActs.filter(a => a.status === 'todo').map(a => (
-                        <MiniTaskCard key={a.id} act={a} today={today} overdue={isOverdue(a)} status="todo" sharedStats={statsFor(a)} />
+                        <MiniTaskCard key={a.id} act={a} today={today} overdue={isOverdue(a)} status="todo" sharedStats={statsFor(a)} notes={notesFor(a)} />
                       ))}
                     </div>
                     )}
@@ -2174,7 +2394,7 @@ function App() {
                         <Icon name="schedule" size={14} /> En curso ({userActs.filter(a => a.status === 'doing').length})
                       </span>
                       {userActs.filter(a => a.status === 'doing').map(a => (
-                        <MiniTaskCard key={a.id} act={a} today={today} overdue={isOverdue(a)} status="doing" sharedStats={statsFor(a)} />
+                        <MiniTaskCard key={a.id} act={a} today={today} overdue={isOverdue(a)} status="doing" sharedStats={statsFor(a)} notes={notesFor(a)} />
                       ))}
                     </div>
                     )}
@@ -2186,7 +2406,7 @@ function App() {
                         <Icon name="check_circle" size={14} /> Hecho ({userActs.filter(a => a.status === 'done').length})
                       </span>
                       {userActs.filter(a => a.status === 'done').map(a => (
-                        <MiniTaskCard key={a.id} act={a} today={today} overdue={isOverdue(a)} status="done" sharedStats={statsFor(a)} />
+                        <MiniTaskCard key={a.id} act={a} today={today} overdue={isOverdue(a)} status="done" sharedStats={statsFor(a)} notes={notesFor(a)} />
                       ))}
                     </div>
                     )}
@@ -2198,7 +2418,7 @@ function App() {
                         <Icon name="cancel" size={14} /> Cancelado ({userActs.filter(a => a.status === 'cancelled').length})
                       </span>
                       {userActs.filter(a => a.status === 'cancelled').map(a => (
-                        <MiniTaskCard key={a.id} act={a} today={today} overdue={isOverdue(a)} status="cancelled" sharedStats={statsFor(a)} />
+                        <MiniTaskCard key={a.id} act={a} today={today} overdue={isOverdue(a)} status="cancelled" sharedStats={statsFor(a)} notes={notesFor(a)} />
                       ))}
                     </div>
                     )}
@@ -2211,46 +2431,24 @@ function App() {
       ) : (
         /* Regular Kanban Board Workspace, Admin Supervising Board, or Team Board */
         <div>
-          {(viewingUserAsAdmin || viewingTeam) && (
-            <div className="glass-panel supervision-banner animate-fade-in">
-              <span className="supervision-banner-text" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                <span className="material-symbols-rounded" style={{ fontSize: '18px', color: 'var(--color-primary)' }}>
-                  {viewingTeam ? 'groups' : 'visibility'}
-                </span>
-                {viewingTeam
-                  ? <>Viendo el tablero compartido del equipo: <strong>{viewingTeam.name}</strong></>
-                  : <>Supervisando e interactuando con el tablero de: <strong>{viewingUserAsAdmin!.username}</strong></>
-                }
-              </span>
-              <button
-                className="btn btn-secondary"
-                style={{ width: 'auto', padding: '0.5rem 1.2rem', fontSize: '0.85rem' }}
-                onClick={() => { handleSelectUser(null); handleSelectTeam(null); }}
-              >
-                {isAdmin ? 'Volver al Panel General' : 'Volver a Mi Tablero'}
-              </button>
-            </div>
-          )}
-
-          {viewingTeam && teamViewers.length > 0 && (
-            <div className="team-live-viewers animate-fade-in">
-              <span className="online-now-dot" />
-              <span>Viendo este tablero ahora mismo contigo:</span>
-              <div className="online-now-avatars">
-                {teamViewers.map(p => (
-                  <span key={p.username} className="team-member-avatar" title={p.username}>{p.username.substring(0, 2).toUpperCase()}</span>
-                ))}
-              </div>
-              <span className="team-live-viewers-names">{teamViewers.map(p => p.username).join(', ')}</span>
-            </div>
-          )}
-
           <div className="selection-bar animate-fade-in">
-            {selectMode && (
-              <span className="selection-hint">
-                Toca las tareas que quieras archivar{selectedIds.size > 0 ? ` · ${selectedIds.size} ${selectedIds.size === 1 ? 'seleccionada' : 'seleccionadas'}` : ''}
-              </span>
-            )}
+            <div className="selection-bar-left">
+              {boardViewers.length > 0 && (
+                <div className="live-pill" role="status">
+                  <AvatarStack members={boardViewers.map(p => ({ name: p.username, online: true }))} max={4} size={26} tipPrefix={`Viendo ${thisBoard} ahora`} />
+                  <span className="live-pill-text">
+                    {boardViewers.length === 1
+                      ? `${displayNameOf(boardViewers[0].username).split(/\s+/)[0]} está viendo ${thisBoard}`
+                      : `${boardViewers.length} personas más están viendo ${thisBoard}`}
+                  </span>
+                </div>
+              )}
+              {selectMode && (
+                <span className="selection-hint">
+                  Toca las tareas que quieras archivar{selectedIds.size > 0 ? ` · ${selectedIds.size} ${selectedIds.size === 1 ? 'seleccionada' : 'seleccionadas'}` : ''}
+                </span>
+              )}
+            </div>
             {selectMode && (
               <button type="button" className="btn btn-secondary" onClick={cancelSelection}>Cancelar</button>
             )}
@@ -2270,7 +2468,7 @@ function App() {
           >
             <div className="column-header">
               <span className="column-title" style={{ color: 'var(--color-todo)' }}>
-                <Icon name="assignment" size={20} /> Por hacer
+                {renderSelectAll('todo', 'Por hacer')}<Icon name="assignment" size={20} /> Por hacer
               </span>
               <span className="column-count">{getCount('todo')}</span>
             </div>
@@ -2283,7 +2481,7 @@ function App() {
                   draggable={!selectMode}
                   onDragStart={(e) => handleDragStart(e, act.id)}
                   onDragEnd={handleDragEnd}
-                  onClick={() => (selectMode ? toggleSelected(act.id) : act.kind === 'shared' ? openCommentsPanel(act) : openEditModal(act))}
+                  onClick={() => (selectMode ? toggleSelected(act.id) : openCard(act))}
                 >
                   <TaskCardBody act={act} today={today} overdue={isOverdue(act)} ownerOnline={isUserOnline(act.username)} sharedStats={statsFor(act)} onEdit={selectMode ? undefined : () => openEditModal(act)} onArchive={selectMode ? undefined : () => void setActivityArchived(act.id, true)} selectMode={selectMode} selected={selectedIds.has(act.id)} />
                 </div>
@@ -2300,7 +2498,7 @@ function App() {
           >
             <div className="column-header">
               <span className="column-title" style={{ color: 'var(--color-doing)' }}>
-                <Icon name="schedule" size={20} /> En curso
+                {renderSelectAll('doing', 'En curso')}<Icon name="schedule" size={20} /> En curso
               </span>
               <span className="column-count">{getCount('doing')}</span>
             </div>
@@ -2313,7 +2511,7 @@ function App() {
                   draggable={!selectMode}
                   onDragStart={(e) => handleDragStart(e, act.id)}
                   onDragEnd={handleDragEnd}
-                  onClick={() => (selectMode ? toggleSelected(act.id) : act.kind === 'shared' ? openCommentsPanel(act) : openEditModal(act))}
+                  onClick={() => (selectMode ? toggleSelected(act.id) : openCard(act))}
                 >
                   <TaskCardBody act={act} today={today} overdue={isOverdue(act)} showProgress ownerOnline={isUserOnline(act.username)} sharedStats={statsFor(act)} onEdit={selectMode ? undefined : () => openEditModal(act)} onArchive={selectMode ? undefined : () => void setActivityArchived(act.id, true)} selectMode={selectMode} selected={selectedIds.has(act.id)} />
                 </div>
@@ -2330,10 +2528,7 @@ function App() {
           >
             <div className="column-header">
               <span className="column-title" style={{ color: 'var(--color-done)' }}>
-                <Icon name="check_circle" size={20} /> Hecho
-                {getCount('done') > 0 && (
-                  <IconButton icon="inventory_2" label="Archivar todo lo hecho" size={28} onClick={archiveAllDone} />
-                )}
+                {renderSelectAll('done', 'Hecho')}<Icon name="check_circle" size={20} /> Hecho
               </span>
               <span className="column-count">{getCount('done')}</span>
             </div>
@@ -2346,7 +2541,7 @@ function App() {
                   draggable={!selectMode}
                   onDragStart={(e) => handleDragStart(e, act.id)}
                   onDragEnd={handleDragEnd}
-                  onClick={() => (selectMode ? toggleSelected(act.id) : act.kind === 'shared' ? openCommentsPanel(act) : openEditModal(act))}
+                  onClick={() => (selectMode ? toggleSelected(act.id) : openCard(act))}
                 >
                   <TaskCardBody act={act} today={today} overdue={false} ownerOnline={isUserOnline(act.username)} sharedStats={statsFor(act)} onEdit={selectMode ? undefined : () => openEditModal(act)} onArchive={selectMode ? undefined : () => void setActivityArchived(act.id, true)} selectMode={selectMode} selected={selectedIds.has(act.id)} />
                 </div>
@@ -2394,39 +2589,100 @@ function App() {
                   </button>
                 </div>
               </div>
-              {(() => {
-                // This person's own progress, first thing in the panel, and it can be moved
-                const pct = ownDraft?.id === act.id ? ownDraft.value : copyProgress(act);
-                const owner = users.find(u => u.username.toLowerCase() === act.username.toLowerCase())?.fullName || act.username;
-                const mine = act.username.toLowerCase() === user?.username.toLowerCase();
-                const label = mine ? 'Mi avance' : `Avance de ${owner}`;
-                return (
-                  <div className="own-progress">
-                    <div className="own-progress-head">
-                      <Avatar name={owner} size={26} online={isUserOnline(act.username)} />
-                      <span className="own-progress-label">{label}</span>
-                      <strong className="own-progress-pct">{pct}%</strong>
-                    </div>
-                    <input
-                      type="range"
-                      min={0}
-                      max={100}
-                      step={5}
-                      className="own-progress-range"
-                      style={{ ['--fill' as string]: `${pct}%`, ['--fill-color' as string]: pct >= 100 ? 'var(--color-done)' : 'var(--color-doing)' }}
-                      value={pct}
-                      disabled={act.status === 'cancelled'}
-                      aria-label={label}
-                      onChange={(e) => handleOwnProgress(act, Number(e.target.value))}
-                    />
-                  </div>
-                );
-              })()}
+              {renderOwnProgress(act)}
               {act.description && <p className="field-hint" style={{ margin: '0 0 0.75rem' }}>{act.description}</p>}
               <div className="task-dates" style={{ marginBottom: '0.5rem' }}>
                 <TaskDates start={act.startDate} end={act.endDate} overdueDays={isOverdue(act) ? daysOverdue(act.endDate, today) : undefined} />
               </div>
               {renderSharedPanel(act)}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Timeline of an individual / repeating task (opens when its card is clicked) */}
+      {(() => {
+        const act = notesForId ? activities.find(a => a.id === notesForId) : undefined;
+        if (!act) return null;
+        const nameOf = (username: string) => users.find(u => u.username.toLowerCase() === username.toLowerCase())?.fullName || username;
+        const dayKey = (iso: string) => { const d = new Date(iso); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+        const dayLabel = (key: string) => {
+          if (key === today) return 'Hoy';
+          const y = new Date(); y.setDate(y.getDate() - 1);
+          if (key === dayKey(y.toISOString())) return 'Ayer';
+          const [yy, mm, dd] = key.split('-').map(Number);
+          return new Date(yy, mm - 1, dd).toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long' });
+        };
+        const mine = notes.filter(n => n.activityId === act.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        const days: { key: string; items: TaskNote[] }[] = [];
+        for (const n of mine) {
+          const k = dayKey(n.createdAt);
+          const last = days[days.length - 1];
+          if (last && last.key === k) last.items.push(n); else days.push({ key: k, items: [n] });
+        }
+        const canWrite = !!user && (canSupervise || act.username.toLowerCase() === user.username.toLowerCase());
+        const accent = act.seriesId ? 'var(--color-recurring)' : 'var(--color-primary)';
+        return (
+          <div className="modal-overlay" onClick={() => setNotesForId(null)}>
+            <div className="glass-panel modal-content animate-scale-in" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '520px' }}>
+              <div className="modal-header">
+                <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
+                  <Icon name="timeline" style={{ color: accent }} />
+                  <span className="comments-title">{act.title}</span>
+                </h3>
+                <div style={{ display: 'flex', gap: '0.4rem' }}>
+                  <IconButton icon="edit" label="Editar tarea" variant="tonal" size={36} onClick={() => openEditModal(act)} />
+                  <button type="button" className="modal-close" onClick={() => setNotesForId(null)} aria-label="Cerrar">
+                    <span className="material-symbols-rounded">close</span>
+                  </button>
+                </div>
+              </div>
+              {act.description && <p className="field-hint" style={{ margin: '0 0 0.75rem' }}>{act.description}</p>}
+              <div className="task-dates" style={{ marginBottom: '0.75rem' }}>
+                <TaskDates start={act.startDate} end={act.endDate} overdueDays={isOverdue(act) ? daysOverdue(act.endDate, today) : undefined} />
+              </div>
+              {renderOwnProgress(act)}
+              <FieldLabel icon="timeline">Línea de tiempo ({mine.length})</FieldLabel>
+              {canWrite && (
+                <div className="comment-compose timeline-compose">
+                  <textarea
+                    className="form-input"
+                    rows={2}
+                    maxLength={1000}
+                    placeholder="¿Qué pasó hoy con esta tarea? (Ctrl+Enter para guardar)"
+                    value={noteText}
+                    onChange={(e) => setNoteText(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void handleSendNote(act.id); } }}
+                  />
+                  <IconButton icon="send" label="Guardar nota" variant="tonal" size={40} onClick={() => void handleSendNote(act.id)} disabled={noteBusy || !noteText.trim()} />
+                </div>
+              )}
+              <ol className="timeline" style={{ ['--timeline-color' as string]: accent }}>
+                {days.map(day => (
+                  <li key={day.key} className="timeline-day">
+                    <h4 className="timeline-day-label">{dayLabel(day.key)}</h4>
+                    <ul>
+                      {day.items.map(n => (
+                        <li key={n.id} className="timeline-note">
+                          <div className="timeline-note-head">
+                            <Avatar name={nameOf(n.username)} size={22} />
+                            <strong>{nameOf(n.username)}</strong>
+                            <time dateTime={n.createdAt}>{new Date(n.createdAt).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}</time>
+                            {user && (canSupervise || n.username.toLowerCase() === user.username.toLowerCase()) && (
+                              <IconButton icon="delete" label="Quitar nota" size={26} onClick={() => void deleteNote(n.id, user.username)} />
+                            )}
+                          </div>
+                          <p>{n.text}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  </li>
+                ))}
+                <li className="timeline-day timeline-start">
+                  <h4 className="timeline-day-label">{dayLabel(dayKey(act.createdAt))}</h4>
+                  <p className="timeline-created"><Icon name="flag" size={16} /> Tarea creada</p>
+                </li>
+              </ol>
             </div>
           </div>
         );
@@ -2512,7 +2768,7 @@ function App() {
                 </div>
               )}
 
-              {!asShared && !viewingUserAsAdmin && (isAdmin || viewingTeam) && (
+              {!asShared && !viewingUserAsAdmin && (canSupervise || viewingTeam) && (
                 <div className="form-group">
                   <FieldLabel icon="person">Asignar A</FieldLabel>
                   <select
@@ -2794,7 +3050,7 @@ function App() {
                       {a.description && <p className="history-row-desc">{a.description}</p>}
                       <div className="history-row-meta">
                         <span className="archive-row-info">
-                          {(viewingTeam || (isAdmin && !viewingUserAsAdmin)) && <span className="history-row-owner">{a.username} · </span>}
+                          {(viewingTeam || (canSupervise && !viewingUserAsAdmin)) && <span className="history-row-owner">{a.username} · </span>}
                           {a.status === 'done'
                             ? `Completada el ${formatShortDate((a.completedAt || a.createdAt).substring(0, 10))}`
                             : a.endDate ? `${statusName[a.status]} · fin ${formatShortDate(a.endDate)}` : statusName[a.status]}
@@ -2829,7 +3085,7 @@ function App() {
           <div className="glass-panel modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <Icon name="group_add" /> Crear Equipo
+                <Icon name={editingTeamId ? 'edit' : 'group_add'} /> {editingTeamId ? 'Editar Equipo' : 'Crear Equipo'}
               </h3>
               <button type="button" className="modal-close" onClick={() => setIsTeamModalOpen(false)} aria-label="Cerrar">
                 <span className="material-symbols-rounded">close</span>
@@ -2904,7 +3160,7 @@ function App() {
               </div>
               <div className="modal-footer">
                 <button type="submit" className="btn btn-primary" style={{ width: 'auto' }} disabled={!teamNameInput.trim() || teamMemberSelection.size === 0}>
-                  Crear Equipo
+                  {editingTeamId ? 'Guardar cambios' : 'Crear Equipo'}
                 </button>
               </div>
             </form>
@@ -3011,16 +3267,18 @@ function App() {
                 <select
                   className="form-input"
                   value={newUserRole}
-                  onChange={(e) => setNewUserRole(e.target.value as 'admin' | 'user')}
+                  onChange={(e) => setNewUserRole(e.target.value as UserRole)}
                 >
-                  <option value="user">Usuario Normal</option>
+                  <option value="user">Normal user</option>
+                  <option value="power">Power user (tareas sin administración)</option>
+                  <option value="viewer">Visor (solo el mapa, sin contraseña)</option>
                   <option value="admin">Usuario Administrador</option>
                 </select>
               </div>
 
-              {newUserRole === 'admin' && (
+              {roleUsesPassword(newUserRole) && (
                 <div className="form-group">
-                  <FieldLabel icon="lock">Contraseña del Administrador</FieldLabel>
+                  <FieldLabel icon="lock">{newUserRole === 'admin' ? 'Contraseña del Administrador' : 'Contraseña del Power user'}</FieldLabel>
                   <input
                     type="password"
                     className="form-input"
@@ -3060,7 +3318,7 @@ function App() {
         </div>
       )}
 
-      {/* Change password modal (admins change their own password) */}
+      {/* Change password modal (admins and power users change their own password) */}
       {isPasswordModalOpen && (
         <div className="modal-overlay" onClick={() => setIsPasswordModalOpen(false)}>
           <div className="glass-panel modal-content animate-scale-in" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '420px' }}>
@@ -3148,7 +3406,7 @@ function App() {
                 </h4>
                 <div className="summary-list">
                   {loginSummary.summary.overdue.map(a => (
-                    <MiniTaskCard key={a.id} act={a} today={today} overdue status={a.status} />
+                    <MiniTaskCard key={a.id} act={a} today={today} overdue status={a.status} notes={notesFor(a)} />
                   ))}
                 </div>
               </section>
@@ -3161,7 +3419,7 @@ function App() {
                 </h4>
                 <div className="summary-list">
                   {loginSummary.summary.fresh.map(a => (
-                    <MiniTaskCard key={a.id} act={a} today={today} overdue={false} status={a.status} />
+                    <MiniTaskCard key={a.id} act={a} today={today} overdue={false} status={a.status} notes={notesFor(a)} />
                   ))}
                 </div>
               </section>
@@ -3328,7 +3586,7 @@ function App() {
                     .filter(u => u.username.toLowerCase() !== 'admin' && u.username.toLowerCase() !== user.username.toLowerCase())
                     .map(u => (
                       <option key={u.username} value={u.username}>
-                        {(u.fullName || u.username)} (@{u.username}) · {u.role === 'admin' ? 'Administrador' : 'Usuario'}
+                        {(u.fullName || u.username)} · {ROLE_LABELS[roleOf(u.username)]}
                       </option>
                     ))}
                 </select>
@@ -3336,19 +3594,20 @@ function App() {
 
               <fieldset className="role-radio-group" disabled={!roleTarget}>
                 <legend><FieldLabel icon="shield_person">Rol</FieldLabel></legend>
-                <label className="role-radio">
-                  <input type="radio" name="role" value="user" checked={roleChoice === 'user'} onChange={() => setRoleChoice('user')} />
-                  <span>Usuario</span>
-                </label>
-                <label className="role-radio">
-                  <input type="radio" name="role" value="admin" checked={roleChoice === 'admin'} onChange={() => setRoleChoice('admin')} />
-                  <span>Administrador</span>
-                </label>
+                {(['user', 'power', 'viewer', 'admin'] as const).map(r => (
+                  <label className="role-radio" key={r}>
+                    <input type="radio" name="role" value={r} checked={roleChoice === r} onChange={() => setRoleChoice(r)} />
+                    <span className="role-radio-text">
+                      <strong>{ROLE_LABELS[r]}</strong>
+                      <small>{ROLE_HINTS[r]}</small>
+                    </span>
+                  </label>
+                ))}
               </fieldset>
 
-              {roleTarget && roleChoice === 'admin' && roleOf(roleTarget) !== 'admin' && (
+              {needsNewPassword && (
                 <div className="form-group">
-                  <FieldLabel icon="lock">Contraseña para el nuevo administrador</FieldLabel>
+                  <FieldLabel icon="lock">{roleChoice === 'admin' ? 'Contraseña para el nuevo administrador' : 'Contraseña para el power user'}</FieldLabel>
                   <input
                     type="password"
                     className="form-input"

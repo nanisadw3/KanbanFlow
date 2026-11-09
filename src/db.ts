@@ -36,6 +36,15 @@ export interface TaskComment {
   createdAt: string;
 }
 
+// A dated note on an individual / repeating task (the task's timeline).
+export interface TaskNote {
+  id: string;
+  activityId: string;
+  username: string;
+  text: string;
+  createdAt: string;
+}
+
 // When a person last opened a shared task's comments (drives the "new comments" badge).
 export interface CommentRead {
   username: string;
@@ -43,10 +52,13 @@ export interface CommentRead {
   lastReadAt: string;
 }
 
+// 'power' = sees the admin panel read-only; 'viewer' = only the activity map (see server/roles.ts).
+export type UserRole = 'admin' | 'power' | 'viewer' | 'user';
+
 export interface User {
   username: string;
   fullName?: string;
-  role?: 'admin' | 'user';
+  role?: UserRole;
   lastLogin: string;
   email?: string | null;
   // When the profile photo last changed (null/absent = no photo). The image itself is at avatarUrl().
@@ -110,6 +122,7 @@ export const subscribeUsers = createCachedSubscription<User[]>('users:all');
 export const subscribeTeams = createCachedSubscription<Team[]>('teams:all');
 export const subscribePresence = createCachedSubscription<PresenceEntry[]>('presence:all');
 export const subscribeComments = createCachedSubscription<TaskComment[]>('comments:all');
+export const subscribeNotes = createCachedSubscription<TaskNote[]>('notes:all');
 export const subscribeCommentReads = createCachedSubscription<CommentRead[]>('commentReads:all');
 
 // Announcements shown as a banner: 'normal' ones (any admin, they expire) and the 'maintenance' one (Inaki only).
@@ -153,6 +166,11 @@ export const addSharedActivity = (payload: SharedTaskInput): Promise<AuthResult>
 
 export const addComment = (sharedId: string, username: string, text: string): Promise<AuthResult> =>
   emitWithAck('comment:add', { sharedId, username, text });
+
+export const addNote = (activityId: string, username: string, text: string): Promise<AuthResult> =>
+  emitWithAck('note:add', { activityId, username, text });
+export const deleteNote = (id: string, username: string): Promise<AuthResult> =>
+  emitWithAck('note:delete', { id, username });
 
 // Marks a shared task's comments as read for that person (fire and forget; the server broadcasts the mark).
 export const markCommentsRead = async (username: string, sharedId: string): Promise<void> => {
@@ -221,7 +239,7 @@ export const clearTeamActivities = async (teamId: string): Promise<void> => {
 
 // --- Users CRUD -----------------------------------------------------------
 
-export const loginUser = async (username: string, fullName?: string, role?: 'admin' | 'user', email?: string): Promise<User> => {
+export const loginUser = async (username: string, fullName?: string, role?: UserRole, email?: string): Promise<User> => {
   const user: User = { username, fullName, role, lastLogin: new Date().toISOString() };
   socket.emit('user:login', { username, fullName, email });
   return user;
@@ -229,7 +247,7 @@ export const loginUser = async (username: string, fullName?: string, role?: 'adm
 
 // --- Admin passwords (verified by the server; hashes never reach the client) ---
 
-export type AuthResult = { ok: boolean; username?: string; error?: 'bad_password' | 'too_short' | 'timeout' | 'invalid_email' | 'not_found' | 'exists' | 'invalid_username' | 'invalid_name' | 'forbidden' | 'invalid_role' | 'protected' | 'self' | 'password_required' | 'invalid_title' | 'invalid_dates' | 'no_participants' | 'invalid_comment' | 'invalid_photo' };
+export type AuthResult = { ok: boolean; username?: string; error?: 'bad_password' | 'too_short' | 'timeout' | 'invalid_email' | 'not_found' | 'exists' | 'invalid_username' | 'invalid_name' | 'forbidden' | 'invalid_role' | 'protected' | 'self' | 'password_required' | 'invalid_title' | 'invalid_dates' | 'no_participants' | 'invalid_comment' | 'not_supported' | 'invalid_photo' };
 
 const emitWithAck = (event: string, payload: object): Promise<AuthResult> =>
   new Promise(resolve => {
@@ -247,7 +265,7 @@ export const changeAdminPassword = (username: string, currentPassword: string, n
 // Changing a role needs the admin's username + password, and the server only accepts it from
 // the role manager ("Inaki"). Promoting to admin also needs a password for the new admin.
 export const setUserRole = (payload: {
-  adminUsername: string; adminPassword: string; username: string; role: 'admin' | 'user'; password?: string;
+  adminUsername: string; adminPassword: string; username: string; role: UserRole; password?: string;
 }): Promise<AuthResult> => emitWithAck('user:setRole', payload);
 
 // Publishing or ending an announcement needs the admin's username + password. The server only lets
@@ -263,7 +281,7 @@ export const endNotice = (payload: { adminUsername: string; adminPassword: strin
 // Creating a user needs an admin's username + password; the server verifies them.
 export const createUserByAdmin = (payload: {
   adminUsername: string; adminPassword: string;
-  username: string; fullName: string; role: 'admin' | 'user'; email: string; password?: string;
+  username: string; fullName: string; role: UserRole; email: string; password?: string;
 }): Promise<AuthResult> => emitWithAck('user:create', payload);
 
 // Where a user's profile photo is served from; the version makes a new photo a new URL.
@@ -310,6 +328,12 @@ export const deleteUser = async (username: string): Promise<void> => {
 export const createTeam = async (name: string, memberUsernames: string[]): Promise<void> => {
   socket.emit('team:create', { name, memberUsernames });
 };
+
+export type TeamUpdateResult = { ok: boolean; error?: 'not_found' | 'forbidden' | 'invalid_name' | 'no_members' | 'name_taken' | 'timeout'; removed?: string[]; added?: string[]; renamed?: boolean };
+
+// Admin only (checked on the server). `by` is the admin making the change.
+export const updateTeam = (teamId: string, name: string, memberUsernames: string[], by: string): Promise<TeamUpdateResult> =>
+  emitWithAck('team:update', { teamId, name, memberUsernames, by }) as unknown as Promise<TeamUpdateResult>;
 
 export const deleteTeam = async (teamId: string): Promise<void> => {
   socket.emit('team:delete', teamId);
