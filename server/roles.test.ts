@@ -105,3 +105,12 @@ test('pasar un administrador a power user pide una contraseña nueva; rol invál
   assert.deepEqual(await row(db, 'Roberto'), { role: 'power', passwordHash: 'hash(clave1)' });
   assert.deepEqual(await change(db, { username: 'Ana', role: 'superjefe' }), { ok: false, error: 'invalid_role' });
 });
+
+test('pasar a alguien a visor le borra el correo y la contraseña; el resto de roles no tocan el correo', async () => {
+  const db = await makeDb();
+  await db.run("UPDATE users SET email = 'ana@x.com' WHERE username = 'Ana'");
+  assert.deepEqual(await change(db, { role: 'power', password: 'clave1' }), { ok: true, role: 'power' });
+  assert.equal((await db.get<{ email: string | null }>("SELECT email FROM users WHERE username = 'Ana'"))!.email, 'ana@x.com');
+  assert.deepEqual(await change(db, { role: 'viewer', password: undefined }), { ok: true, role: 'viewer' });
+  assert.deepEqual(await db.get("SELECT role, passwordHash, email FROM users WHERE username = 'Ana'"), { role: 'viewer', passwordHash: null, email: null });
+});

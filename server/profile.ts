@@ -51,7 +51,7 @@ export async function updateProfile(
   patch: ProfilePatch,
   now: Date = new Date()
 ): Promise<{ ok: true; username: string } | { ok: false; error: ProfileError }> {
-  const row = await db.get<{ username: string }>('SELECT username FROM users WHERE username = ? COLLATE NOCASE', [current]);
+  const row = await db.get<{ username: string; role: string | null }>('SELECT username, role FROM users WHERE username = ? COLLATE NOCASE', [current]);
   if (!row) return { ok: false, error: 'not_found' };
   const old = row.username;
 
@@ -62,7 +62,8 @@ export async function updateProfile(
   }
 
   let email: string | undefined;
-  if (patch.email !== undefined) {
+  // A viewer has no e-mail: whatever is sent is ignored.
+  if (patch.email !== undefined && row.role !== 'viewer') {
     const e = normalizeEmail(patch.email);
     if (!e) return { ok: false, error: 'invalid_email' };
     email = e;

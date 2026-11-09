@@ -68,3 +68,13 @@ test('validateNewUser: power user y admin piden contraseña, el visor no; un rol
   assert.ok(odd.ok && odd.user.role === 'user');
   assert.deepEqual(validateNewUser({ ...base, role: 'admin', password: 'abc' }, 4), { ok: false, error: 'too_short' });
 });
+
+test('validateNewUser: un visor no lleva correo (se ignora lo escrito); los demás roles lo exigen', () => {
+  const base = { username: 'vera', fullName: 'Vera Visor' };
+  const sin = validateNewUser({ ...base, role: 'viewer' }, 4);
+  assert.ok(sin.ok && sin.user.role === 'viewer' && sin.user.email === null);
+  const conCorreo = validateNewUser({ ...base, role: 'viewer', email: 'vera@x.com' }, 4);
+  assert.ok(conCorreo.ok && conCorreo.user.email === null);
+  assert.deepEqual(validateNewUser({ ...base, role: 'user' }, 4), { ok: false, error: 'invalid_email' });
+  assert.deepEqual(validateNewUser({ ...base, role: 'power', password: 'clave1' }, 4), { ok: false, error: 'invalid_email' });
+});

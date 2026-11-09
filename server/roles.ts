@@ -63,6 +63,12 @@ export async function changeUserRole(
     return { ok: true, role };
   }
 
+  // A viewer has no e-mail (and no board): turning someone into one also clears their address, so no
+  // notice is ever sent to them.
+  if (role === 'viewer') {
+    await db.run('UPDATE users SET role = ?, passwordHash = NULL, email = NULL WHERE username = ?', [role, target.username]);
+    return { ok: true, role };
+  }
   await db.run('UPDATE users SET role = ?, passwordHash = NULL WHERE username = ?', [role, target.username]);
   return { ok: true, role };
 }

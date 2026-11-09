@@ -221,6 +221,8 @@ async function initSQLite() {
   await ensureCommentsTable(db);
   await ensureCommentReadsTable(db);
   await ensureNotesTable(db);
+  // A viewer has no e-mail: clear any address left from before the role existed, so no notice reaches them.
+  await db.run("UPDATE users SET email = NULL WHERE role = 'viewer' AND email IS NOT NULL");
 
   await ensureSettingsTable(db);
   await ensureNoticesTable(db);
@@ -836,6 +838,9 @@ io.on('connection', async (socket) => {
     const email = normalizeEmail(payload?.email);
     if (!email) return reply({ ok: false, error: 'invalid_email' });
     const username = typeof payload?.username === 'string' ? payload.username : '';
+    // a viewer has no e-mail
+    const target = await db.get<{ role: string | null }>('SELECT role FROM users WHERE username = ? COLLATE NOCASE', [username]);
+    if (target?.role === 'viewer') return reply({ ok: false, error: 'not_supported' });
     const result = await db.run('UPDATE users SET email = ? WHERE username = ? COLLATE NOCASE', [email, username]);
     if (!result.changes) return reply({ ok: false, error: 'not_found' });
     await broadcastUsers();

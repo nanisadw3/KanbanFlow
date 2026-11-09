@@ -140,3 +140,14 @@ test('sin campos no cambia nada', async () => {
   const db = await makeDb();
   assert.deepEqual(await updateProfile(db, 'Ana', {}), { ok: true, username: 'Ana' });
 });
+
+test('el perfil de un visor no tiene correo: lo que se mande se ignora y no es error', async () => {
+  const db = await makeDb();
+  await db.run("INSERT INTO users (username, fullName, role, lastLogin, email) VALUES ('Vera','Vera V','viewer','x',NULL)");
+  const r = await updateProfile(db, 'Vera', { fullName: 'Vera Visor', email: 'no-valido' });
+  assert.deepEqual(r, { ok: true, username: 'Vera' });
+  const row = await db.get<{ fullName: string; email: string | null }>("SELECT fullName, email FROM users WHERE username = 'Vera'");
+  assert.deepEqual(row, { fullName: 'Vera Visor', email: null });
+  // a regular user still can't save an invalid address
+  assert.deepEqual(await updateProfile(db, 'Ana', { email: 'no-valido' }), { ok: false, error: 'invalid_email' });
+});
