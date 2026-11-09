@@ -67,3 +67,43 @@ export async function pruneNotes(db: Database): Promise<void> {
 export async function renameNoteAuthor(db: Database, from: string, to: string): Promise<void> {
   await db.run('UPDATE task_notes SET username = ? WHERE LOWER(username) = LOWER(?)', [to, from]);
 }
+
+// ── Telling the owner about a note somebody else left ─────────────────────────────────────────
+
+export interface NoteRecipient {
+  task: { title: string; description: string; endDate: string; priority: string; repeating: boolean };
+  owner: { username: string; fullName: string | null; email: string };
+  authorName: string;
+}
+
+// The person to e-mail about a note that was JUST added: the task's owner, when somebody else wrote it
+// and the owner has an address. Null when there's nobody to tell.
+export async function noteRecipient(db: Database, activityId: string, author: string): Promise<NoteRecipient | null> {
+  const task = await db.get<{ title: string; description: string | null; endDate: string | null; priority: string | null; seriesId: string | null; username: string }>(
+    'SELECT title, description, endDate, priority, seriesId, username FROM activities WHERE id = ?', [activityId]
+  );
+  if (!task) return null;
+  const authorRow = await db.get<{ username: string; fullName: string | null }>('SELECT username, fullName FROM users WHERE username = ? COLLATE NOCASE', [author]);
+  if (!authorRow || authorRow.username.toLowerCase() === task.username.toLowerCase()) return null;
+  const owner = await db.get<{ username: string; fullName: string | null; email: string | null }>('SELECT username, fullName, email FROM users WHERE username = ? COLLATE NOCASE', [task.username]);
+  if (!owner || !owner.email) return null;
+  return {
+    task: { title: task.title, description: task.description ?? '', endDate: task.endDate ?? '', priority: task.priority ?? 'media', repeating: !!task.seriesId },
+    owner: { username: owner.username, fullName: owner.fullName, email: owner.email },
+    authorName: authorRow.fullName || authorRow.username,
+  };
+}
+
+// At most one e-mail per task every `windowMs` (default 30 min), so a run of notes never floods the inbox.
+// Kept in memory: after a restart the first note simply e-mails again.
+export function createNoteThrottle(windowMs = 30 * 60 * 1000) {
+  const last = new Map<string, number>();
+  return {
+    allow(activityId: string, now: number = Date.now()): boolean {
+      const before = last.get(activityId);
+      if (before !== undefined && now - before < windowMs) return false;
+      last.set(activityId, now);
+      return true;
+    },
+  };
+}

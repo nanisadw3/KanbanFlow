@@ -9,8 +9,8 @@ import { existsSync, mkdirSync } from 'fs';
 import { scrypt as scryptCb, randomBytes, timingSafeEqual } from 'crypto';
 import { normalizeEmail } from './email.ts';
 import { updateTeam } from './teams.ts';
-import { ensureNotesTable, addNote, deleteNote, pruneNotes } from './notes.ts';
-import { createMailer, mailerFromConfig, newTaskMessage, sharedTaskMessage, commentMessage, maintenanceMessage, announcementMessage, testMessage, type Mailer } from './mailer.ts';
+import { ensureNotesTable, addNote, deleteNote, pruneNotes, noteRecipient, createNoteThrottle } from './notes.ts';
+import { createMailer, mailerFromConfig, newTaskMessage, sharedTaskMessage, commentMessage, noteMessage, maintenanceMessage, announcementMessage, testMessage, type Mailer } from './mailer.ts';
 import { ensureSettingsTable, getSetting, setSetting, resolveMailConfig, saveMailConfig, publicMailSettings } from './settings.ts';
 import { autoCompleteAtFull } from './autocomplete.ts';
 import { validateNewUser, createUser, touchLogin } from './users.ts';
@@ -436,6 +436,19 @@ async function notifySharedTask(
 }
 
 // A comment on a shared task emails the other participants, but only the first unread one each (see commentRecipients).
+// A note on someone's individual / repeating task e-mails its owner (never the author), at most once per
+// task every 30 minutes. Fire-and-forget like the other notices.
+const noteThrottle = createNoteThrottle();
+async function notifyNote(activityId: string, author: string, text: string) {
+  if (!mailer.enabled) return;
+  const r = await noteRecipient(db, activityId, author);
+  if (!r || !noteThrottle.allow(activityId)) return;
+  const { subject, text: body, html } = noteMessage(r.task, r.authorName, text, {
+    name: r.owner.fullName || r.owner.username, appUrl: process.env.APP_URL, repeating: r.task.repeating,
+  });
+  await mailer.send(r.owner.email, subject, body, html);
+}
+
 async function notifyComment(sharedId: string, author: string, text: string) {
   if (!mailer.enabled) return;
   const task = await db.get<{ title: string; description: string; endDate: string; priority: string; seriesId: string | null }>(
@@ -554,7 +567,10 @@ io.on('connection', async (socket) => {
   // Timeline notes on individual / repeating tasks (see server/notes.ts).
   socket.on('note:add', async (payload: { activityId?: string; username?: string; text?: string }, ack?: (res: { ok: boolean; error?: string }) => void) => {
     const result = await addNote(db, payload ?? {});
-    if (result.ok) io.emit('notes:all', await getNotes());
+    if (result.ok) {
+      io.emit('notes:all', await getNotes());
+      void notifyNote(String(payload.activityId), String(payload.username), String(payload.text)).catch(err => console.error('[Mailer] notifyNote falló:', err));
+    }
     (ack ?? (() => {}))(result);
   });
   socket.on('note:delete', async (payload: { id?: string; username?: string }, ack?: (res: { ok: boolean; error?: string }) => void) => {

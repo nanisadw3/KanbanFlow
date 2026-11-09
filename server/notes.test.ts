@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import sqlite3 from 'sqlite3';
 import { open, type Database } from 'sqlite';
-import { ensureNotesTable, addNote, deleteNote, pruneNotes } from './notes.ts';
+import { ensureNotesTable, addNote, deleteNote, pruneNotes, noteRecipient, createNoteThrottle } from './notes.ts';
 
 async function makeDb(): Promise<Database> {
   const db = await open({ filename: ':memory:', driver: sqlite3.Database });
@@ -53,4 +53,46 @@ test('un power user anota y borra notas en tareas ajenas; un visor no', async ()
   const id = (await db.get<{ id: string }>("SELECT id FROM task_notes WHERE username = 'Pia' LIMIT 1"))!.id;
   assert.deepEqual(await deleteNote(db, { id, username: 'Vic' }), { ok: false, error: 'forbidden' });
   assert.deepEqual(await deleteNote(db, { id, username: 'Pia' }), { ok: true });
+});
+
+// ── Aviso al dueño ──────────────────────────────────────────────────────────────────────────
+
+async function makeMailDb(): Promise<Database> {
+  const db = await open({ filename: ':memory:', driver: sqlite3.Database });
+  await db.exec(`
+    CREATE TABLE users (username TEXT PRIMARY KEY, role TEXT, fullName TEXT, email TEXT);
+    CREATE TABLE activities (id TEXT PRIMARY KEY, username TEXT, kind TEXT, title TEXT, description TEXT, endDate TEXT, priority TEXT, seriesId TEXT);
+    INSERT INTO users VALUES ('Ana','user','Ana Pérez','ana@x.com'), ('Beto','user','Beto Ruiz','beto@x.com'),
+      ('Sin','user','Sin Correo',NULL), ('Pia','power','Pia Poder','pia@x.com');
+    INSERT INTO activities VALUES ('t1','Ana','single','Informe','d','2026-12-01','alta',NULL),
+      ('t2','Ana','recurring','Reporte semanal','','','media','ser1'), ('t3','Sin','single','Sin aviso','','','media',NULL);
+  `);
+  return db;
+}
+
+test('noteRecipient: avisa al dueño cuando otra persona anota; nunca al propio autor', async () => {
+  const db = await makeMailDb();
+  const r = await noteRecipient(db, 't1', 'pia');
+  assert.equal(r?.owner.email, 'ana@x.com');
+  assert.equal(r?.authorName, 'Pia Poder');
+  assert.equal(r?.task.title, 'Informe');
+  assert.equal(r?.task.repeating, false);
+  assert.equal((await noteRecipient(db, 't2', 'Beto'))?.task.repeating, true);
+  assert.equal(await noteRecipient(db, 't1', 'ANA'), null); // el dueño anotando en su propia tarea
+});
+
+test('noteRecipient: nadie a quien avisar si el dueño no tiene correo o la tarea/autor no existen', async () => {
+  const db = await makeMailDb();
+  assert.equal(await noteRecipient(db, 't3', 'Pia'), null);
+  assert.equal(await noteRecipient(db, 'nope', 'Pia'), null);
+  assert.equal(await noteRecipient(db, 't1', 'nadie'), null);
+});
+
+test('createNoteThrottle: un correo por tarea cada ventana; otra tarea no se ve afectada', () => {
+  const th = createNoteThrottle(1000);
+  assert.equal(th.allow('t1', 0), true);
+  assert.equal(th.allow('t1', 500), false);
+  assert.equal(th.allow('t2', 500), true);
+  assert.equal(th.allow('t1', 1000), true);
+  assert.equal(th.allow('t1', 1500), false);
 });

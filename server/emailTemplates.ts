@@ -308,6 +308,23 @@ export function commentMessage(task: MailTask, authorName: string, text: string,
   });
 }
 
+// Someone else wrote a note on the recipient's individual / repeating task (its timeline).
+export function noteMessage(task: MailTask, authorName: string, text: string, o: MessageOptions & { repeating?: boolean } = {}): MailMessage {
+  const excerpt = text.length > 400 ? `${text.slice(0, 400).trimEnd()}…` : text;
+  return build({
+    subject: `📝 ${authorName} anotó en tu tarea: ${task.title}`,
+    preheader: `${authorName} dejó una nota en la línea de tiempo de tu tarea.`,
+    theme: o.repeating ? TEAL : BLUE,
+    emoji: '📝',
+    heading: 'Nueva nota en tu tarea',
+    greeting: hello(o.name),
+    intro: `${authorName} dejó una nota en tu ${o.repeating ? 'tarea repetitiva' : 'tarea'} "${task.title}":`,
+    quote: excerpt,
+    closing: 'Entra a KanbanFlow y abre la tarea para ver su línea de tiempo. Si llegan más notas seguidas, te enviamos un solo correo cada rato para no llenarte la bandeja. 📝',
+    appUrl: o.appUrl,
+  });
+}
+
 // Sent by the role manager to everyone with an email when a new feature is about to be released.
 export function maintenanceMessage(message: string, o: MessageOptions = {}): MailMessage {
   return build({

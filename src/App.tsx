@@ -108,6 +108,7 @@ function App() {
   const [comments, setComments] = useState<TaskComment[]>([]);
   const [commentReads, setCommentReads] = useState<CommentRead[]>([]);
   const [notes, setNotes] = useState<TaskNote[]>([]);
+  const seenNoteIds = useRef<Set<string> | null>(null);
   const [notesForId, setNotesForId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState('');
   const [noteBusy, setNoteBusy] = useState(false);
@@ -219,6 +220,22 @@ function App() {
   const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false); // "¿solo las actuales o también archivadas?"
   const { toast, show: showToast } = useToast();
+
+  // Someone else left a note on one of MY tasks while I'm here: tell me right away (the e-mail covers the
+  // times I'm away).
+  useEffect(() => {
+    const seen = seenNoteIds.current;
+    if (!user || seen === null) return;
+    for (const n of notes) {
+      if (seen.has(n.id)) continue;
+      seen.add(n.id);
+      if (n.username.toLowerCase() === user.username.toLowerCase()) continue;
+      const task = activities.find(a => a.id === n.activityId);
+      if (!task || task.username.toLowerCase() !== user.username.toLowerCase()) continue;
+      const who = users.find(u => u.username.toLowerCase() === n.username.toLowerCase())?.fullName || n.username;
+      showToast(`${who} anotó en tu tarea "${task.title}".`, true);
+    }
+  }, [notes, activities, users, user, showToast]);
   const [archiveTab, setArchiveTab] = useState<ArchiveTab>('all');
 
   // Drag-to-trash cancel gesture: the trash zone stays hidden and only
@@ -340,7 +357,11 @@ function App() {
     const unsubPresence = subscribePresence(setPresence);
     const unsubComments = subscribeComments(setComments);
     const unsubCommentReads = subscribeCommentReads(setCommentReads);
-    const unsubNotes = subscribeNotes(setNotes);
+    const unsubNotes = subscribeNotes(list => {
+      // The first snapshot is what was already there: only notes that arrive after it are "new".
+      if (seenNoteIds.current === null) seenNoteIds.current = new Set(list.map(n => n.id));
+      setNotes(list);
+    });
     const unsubNotices = subscribeNotices(setNotices);
     return () => {
       unsubActivities();

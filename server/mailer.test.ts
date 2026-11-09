@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createMailer, mailerFromConfig, createGmailTransport, buildRawMessage, newTaskMessage, sharedTaskMessage, commentMessage, overdueMessage, testMessage } from './mailer.ts';
+import { createMailer, mailerFromConfig, createGmailTransport, buildRawMessage, newTaskMessage, sharedTaskMessage, commentMessage, noteMessage, overdueMessage, testMessage } from './mailer.ts';
 
 const task = { title: 'Entregar reporte', description: 'Reporte mensual', endDate: '2026-10-20', priority: 'alta' };
 
@@ -343,4 +343,17 @@ test('si todos los intentos fallan, lanza el último error y el mailer lo descri
   assert.match(r.error ?? '', /fetch failed \(UND_ERR_SOCKET: other side closed\)/);
   const timeout = createMailer({ sendMail: async () => { throw new DOMException('The operation was aborted due to timeout', 'TimeoutError'); } }, 'k@x.com');
   assert.match((await timeout.trySend('a@x.com', 's', 't')).error ?? '', /no respondió a tiempo/);
+});
+
+test('aviso de nota: dice quién anotó y en qué tarea, cita la nota, y escapa el HTML', () => {
+  const n = noteMessage(task, 'Pia Poder', 'Falta el comparativo', { name: 'Ana Pérez' });
+  assert.match(n.subject, /Pia Poder anotó en tu tarea: Entregar reporte/);
+  assert.match(n.text, /Hola, Ana/);
+  assert.match(n.text, /Falta el comparativo/);
+  assert.match(n.html, /#4f46e5/); // azul de una tarea normal
+  const rep = noteMessage(task, 'Pia Poder', 'x', { repeating: true });
+  assert.match(rep.html, /#0e6663/); // verde azulado de una repetitiva
+  assert.match(rep.text, /tarea repetitiva/);
+  const evil = noteMessage({ ...task, title: '<b>t</b>' }, '<i>x</i>', '<script>alert(1)</script>');
+  assert.ok(!evil.html.includes('<script>') && !evil.html.includes('<i>x</i>') && !evil.html.includes('<b>t</b>'));
 });
